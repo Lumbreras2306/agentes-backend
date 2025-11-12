@@ -1,8 +1,10 @@
 from django.db import models
+import uuid
 
 
 class WorldTemplate(models.Model):
     """Plantilla de configuración para generar mundos"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100, unique=True)
     width = models.IntegerField(default=20)
     height = models.IntegerField(default=20)
@@ -12,7 +14,7 @@ class WorldTemplate(models.Model):
     field_growth_chance = models.FloatField(default=0.55)
     min_fields = models.IntegerField(default=5)
     min_roads = models.IntegerField(default=10)
-    max_attempts = models.IntegerField(default=20)
+    max_attempts = models.IntegerField(default=30)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -24,6 +26,7 @@ class WorldTemplate(models.Model):
 
 class World(models.Model):
     """Mundo generado con su grid 2D"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
     template = models.ForeignKey(WorldTemplate, on_delete=models.SET_NULL, null=True, blank=True)
     width = models.IntegerField()

@@ -42,7 +42,7 @@ class WorldDetailSerializer(serializers.ModelSerializer):
 class WorldGenerateSerializer(serializers.Serializer):
     """Serializer para generar un nuevo mundo"""
     name = serializers.CharField(max_length=100)
-    template_id = serializers.IntegerField(required=False, allow_null=True)
+    template_id = serializers.UUIDField(required=False, allow_null=True)
     width = serializers.IntegerField(default=20, min_value=5, max_value=100)
     height = serializers.IntegerField(default=20, min_value=5, max_value=100)
     seed = serializers.IntegerField(required=False, allow_null=True)
@@ -62,7 +62,7 @@ class WorldGenerateSerializer(serializers.Serializer):
         if template_id:
             try:
                 data['template'] = WorldTemplate.objects.get(id=template_id)
-            except WorldTemplate.DoesNotExist:
+            except (WorldTemplate.DoesNotExist, ValueError):
                 raise serializers.ValidationError({
                     'template_id': 'Template no encontrado'
                 })
@@ -95,7 +95,7 @@ class WorldGenerateSerializer(serializers.Serializer):
                 'field_growth_chance': 0.55,
                 'min_fields': 5,
                 'min_roads': 10,
-                'max_attempts': 20,
+                'max_attempts': 30,
             }
         
         # Override con parámetros explícitos

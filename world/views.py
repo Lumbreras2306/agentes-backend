@@ -1,6 +1,14 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.http import HttpResponse
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.colors as mcolors
+import numpy as np
+from io import BytesIO
 
 from .models import World, WorldTemplate
 from .serializers import (
@@ -9,7 +17,8 @@ from .serializers import (
     WorldGenerateSerializer,
     WorldTemplateSerializer
 )
-from .world_generator import WorldGenerator
+from .world_generator import WorldGenerator, TileType, CropType
+from .renderers import PNGRenderer
 
 
 class WorldTemplateViewSet(viewsets.ModelViewSet):
@@ -82,7 +91,7 @@ class WorldViewSet(viewsets.ModelViewSet):
                 'field_growth_chance': 0.55,
                 'min_fields': 5,
                 'min_roads': 10,
-                'max_attempts': 20,
+                'max_attempts': 30,
             }
         
         generator = WorldGenerator(width=world.width, height=world.height, seed=new_seed)
@@ -133,3 +142,225 @@ class WorldViewSet(viewsets.ModelViewSet):
             'crop_grid': world.crop_grid,
             'infestation_grid': world.infestation_grid
         })
+    
+    @action(detail=True, methods=['get'], renderer_classes=[PNGRenderer])
+    def visualize(self, request, pk=None):
+        """
+        Genera una visualización del mundo como imagen PNG
+        
+        GET /api/worlds/{id}/visualize/
+        GET /api/worlds/{id}/visualize/?layer=crop
+        GET /api/worlds/{id}/visualize/?layer=infestation
+        
+        Parámetros:
+        - layer: 'tile' (default), 'crop', 'infestation'
+        """
+        world = self.get_object()
+        layer = request.query_params.get('layer', 'tile')
+        
+        # Configurar colores según el layer
+        if layer == 'crop':
+            grid_data = world.crop_grid
+            colors = {
+                int(CropType.NONE): '#1a1a1a',      # Negro para vacío
+                int(CropType.WHEAT): '#f4e04d',     # Amarillo para trigo
+                int(CropType.CORN): '#95d840',      # Verde claro para maíz
+                int(CropType.SOY): '#7eb26d',       # Verde oscuro para soya
+            }
+            legend_labels = {
+                int(CropType.NONE): 'Vacío',
+                int(CropType.WHEAT): 'Trigo',
+                int(CropType.CORN): 'Maíz',
+                int(CropType.SOY): 'Soya',
+            }
+            title = f'{world.name} - Cultivos'
+        elif layer == 'infestation':
+            grid_data = world.infestation_grid
+            # Para infestación usamos escala de grises/colores
+            fig, ax = plt.subplots(figsize=(12, 12))
+            im = ax.imshow(grid_data, cmap='RdYlGn_r', interpolation='nearest', vmin=0, vmax=100)
+            ax.set_title(f'{world.name} - Nivel de Infestación', fontsize=16, fontweight='bold')
+            ax.set_xlabel('X', fontsize=12)
+            ax.set_ylabel('Z', fontsize=12)
+            ax.grid(True, alpha=0.3)
+            
+            # Colorbar
+            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            cbar.set_label('Infestación (%)', rotation=270, labelpad=20, fontsize=12)
+            
+            # Guardar en buffer
+            buffer = BytesIO()
+            plt.tight_layout()
+            plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+            buffer.seek(0)
+            image_data = buffer.getvalue()
+            plt.close()
+            buffer.close()
+            
+            return HttpResponse(image_data, content_type='image/png')
+        else:  # tile (default)
+            grid_data = world.grid
+            colors = {
+                int(TileType.IMPASSABLE): '#2d2d2d',  # Gris oscuro
+                int(TileType.ROAD): '#8b7355',        # Café para camino
+                int(TileType.FIELD): '#7ec850',       # Verde para campo
+                int(TileType.BARN): '#c44536',        # Rojo para granero
+            }
+            legend_labels = {
+                int(TileType.IMPASSABLE): 'Intransitable',
+                int(TileType.ROAD): 'Camino',
+                int(TileType.FIELD): 'Campo',
+                int(TileType.BARN): 'Granero',
+            }
+            title = f'{world.name} - Terreno'
+        
+        # Crear la visualización (para tile y crop)
+        if layer != 'infestation':
+            fig, ax = plt.subplots(figsize=(12, 12))
+            
+            # Crear matriz de colores RGB (convertir hex a RGB)
+            def hex_to_rgb(hex_color):
+                """Convierte color hexadecimal a RGB normalizado (0-1)"""
+                hex_color = hex_color.lstrip('#')
+                return tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+            
+            # Convertir grid a matriz RGB
+            height = len(grid_data)
+            width = len(grid_data[0]) if grid_data else 0
+            rgb_grid = np.zeros((height, width, 3))
+            
+            for i, row in enumerate(grid_data):
+                for j, cell in enumerate(row):
+                    # Asegurar que cell sea un entero para la comparación
+                    cell_value = int(cell) if cell is not None else 0
+                    hex_color = colors.get(cell_value, '#000000')
+                    rgb_grid[i, j] = hex_to_rgb(hex_color)
+            
+            # Mostrar la imagen
+            ax.imshow(rgb_grid, interpolation='nearest')
+            ax.set_title(title, fontsize=16, fontweight='bold')
+            ax.set_xlabel('X', fontsize=12)
+            ax.set_ylabel('Z', fontsize=12)
+            ax.grid(True, alpha=0.3, color='white', linewidth=0.5)
+            
+            # Agregar leyenda
+            patches = [mpatches.Patch(color=color, label=legend_labels[key]) 
+                      for key, color in colors.items()]
+            ax.legend(handles=patches, loc='upper left', bbox_to_anchor=(1, 1), 
+                     fontsize=10, framealpha=0.9)
+            
+            # Guardar en buffer
+            buffer = BytesIO()
+            plt.tight_layout()
+            plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+            buffer.seek(0)
+            image_data = buffer.getvalue()
+            plt.close()
+            buffer.close()
+            
+            return HttpResponse(image_data, content_type='image/png')
+    
+    @action(detail=True, methods=['get'], renderer_classes=[PNGRenderer])
+    def visualize_combined(self, request, pk=None):
+        """
+        Genera una visualización combinada con los 3 layers
+        
+        GET /api/worlds/{id}/visualize_combined/
+        """
+        world = self.get_object()
+        
+        fig, axes = plt.subplots(1, 3, figsize=(20, 7))
+        
+        # Layer 1: Terreno
+        tile_colors = {
+            int(TileType.IMPASSABLE): '#2d2d2d',
+            int(TileType.ROAD): '#8b7355',
+            int(TileType.FIELD): '#7ec850',
+            int(TileType.BARN): '#c44536',
+        }
+        tile_labels = {
+            int(TileType.IMPASSABLE): 'Intransitable',
+            int(TileType.ROAD): 'Camino',
+            int(TileType.FIELD): 'Campo',
+            int(TileType.BARN): 'Granero',
+        }
+        # Convertir tile_grid a RGB
+        def hex_to_rgb(hex_color):
+            """Convierte color hexadecimal a RGB normalizado (0-1)"""
+            hex_color = hex_color.lstrip('#')
+            return tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+        
+        height = len(world.grid)
+        width = len(world.grid[0]) if world.grid else 0
+        tile_rgb = np.zeros((height, width, 3))
+        for i, row in enumerate(world.grid):
+            for j, cell in enumerate(row):
+                # Asegurar que cell sea un entero para la comparación
+                cell_value = int(cell) if cell is not None else 0
+                hex_color = tile_colors.get(cell_value, '#000000')
+                tile_rgb[i, j] = hex_to_rgb(hex_color)
+        
+        axes[0].imshow(tile_rgb, interpolation='nearest')
+        axes[0].set_title('Terreno', fontsize=14, fontweight='bold')
+        axes[0].set_xlabel('X')
+        axes[0].set_ylabel('Z')
+        axes[0].grid(True, alpha=0.3, color='white', linewidth=0.5)
+        patches = [mpatches.Patch(color=color, label=tile_labels[key]) 
+                  for key, color in tile_colors.items()]
+        axes[0].legend(handles=patches, loc='upper left', fontsize=8)
+        
+        # Layer 2: Cultivos
+        crop_colors = {
+            int(CropType.NONE): '#1a1a1a',
+            int(CropType.WHEAT): '#f4e04d',
+            int(CropType.CORN): '#95d840',
+            int(CropType.SOY): '#7eb26d',
+        }
+        crop_labels = {
+            int(CropType.NONE): 'Vacío',
+            int(CropType.WHEAT): 'Trigo',
+            int(CropType.CORN): 'Maíz',
+            int(CropType.SOY): 'Soya',
+        }
+        # Convertir crop_grid a RGB
+        crop_rgb = np.zeros((height, width, 3))
+        for i, row in enumerate(world.crop_grid):
+            for j, cell in enumerate(row):
+                # Asegurar que cell sea un entero para la comparación
+                cell_value = int(cell) if cell is not None else 0
+                hex_color = crop_colors.get(cell_value, '#000000')
+                crop_rgb[i, j] = hex_to_rgb(hex_color)
+        
+        axes[1].imshow(crop_rgb, interpolation='nearest')
+        axes[1].set_title('Cultivos', fontsize=14, fontweight='bold')
+        axes[1].set_xlabel('X')
+        axes[1].set_ylabel('Z')
+        axes[1].grid(True, alpha=0.3, color='white', linewidth=0.5)
+        patches = [mpatches.Patch(color=color, label=crop_labels[key]) 
+                  for key, color in crop_colors.items()]
+        axes[1].legend(handles=patches, loc='upper left', fontsize=8)
+        
+        # Layer 3: Infestación
+        im = axes[2].imshow(world.infestation_grid, cmap='RdYlGn_r', 
+                           interpolation='nearest', vmin=0, vmax=100)
+        axes[2].set_title('Infestación', fontsize=14, fontweight='bold')
+        axes[2].set_xlabel('X')
+        axes[2].set_ylabel('Z')
+        axes[2].grid(True, alpha=0.3)
+        cbar = plt.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
+        cbar.set_label('%', rotation=0, labelpad=10)
+        
+        # Título general
+        fig.suptitle(f'{world.name} ({world.width}x{world.height})', 
+                    fontsize=16, fontweight='bold')
+        
+        # Guardar en buffer
+        buffer = BytesIO()
+        plt.tight_layout()
+        plt.savefig(buffer, format='png', dpi=150, bbox_inches='tight')
+        buffer.seek(0)
+        image_data = buffer.getvalue()
+        plt.close()
+        buffer.close()
+        
+        return HttpResponse(image_data, content_type='image/png')

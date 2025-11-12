@@ -44,7 +44,9 @@ class WorldGenerator:
 
     def _reset(self) -> None:
         """Reinicia todos los grids"""
-        self.grid = [[TileType.IMPASSABLE for _ in range(self.width)] for _ in range(self.height)]
+        # Inicializar como None (vacío) en lugar de IMPASSABLE
+        # Los intransitables se agregarán al final
+        self.grid = [[None for _ in range(self.width)] for _ in range(self.height)]
         self.crop_grid = [[CropType.NONE for _ in range(self.width)] for _ in range(self.height)]
         self.infestation_grid = [[0 for _ in range(self.width)] for _ in range(self.height)]
 
@@ -53,8 +55,8 @@ class WorldGenerator:
         return 0 <= x < self.width and 0 <= z < self.height
 
     def _is_free(self, x: int, z: int) -> bool:
-        """Verifica si una celda está libre"""
-        return self._in_bounds(x, z) and self.grid[z][x] == TileType.IMPASSABLE
+        """Verifica si una celda está libre (None/vacía, como CellModels)"""
+        return self._in_bounds(x, z) and self.grid[z][x] is None
 
     def _get_neighbors(self, x: int, z: int) -> List[Tuple[int, int]]:
         """Retorna las coordenadas de los 4 vecinos directos"""
@@ -114,13 +116,15 @@ class WorldGenerator:
         road_cells: Set[Tuple[int, int]], 
         field_chance: float
     ) -> Set[Tuple[int, int]]:
-        """Coloca campos iniciales adyacentes a los caminos"""
+        """Coloca campos iniciales adyacentes a los caminos (similar a CellModels)"""
         field_cells: Set[Tuple[int, int]] = set()
         crop_types = [CropType.WHEAT, CropType.CORN, CropType.SOY]
         
+        # Iterar sobre todas las celdas libres
         for z in range(self.height):
             for x in range(self.width):
-                if self.grid[z][x] != TileType.IMPASSABLE:
+                # Solo considerar celdas libres (intransitables)
+                if not self._is_free(x, z):
                     continue
                 
                 # Verificar si tiene vecino camino
@@ -149,9 +153,11 @@ class WorldGenerator:
         for _ in range(rounds):
             new_fields: Set[Tuple[int, int]] = set()
             
+            # Iterar sobre todas las celdas libres (solo intransitables)
             for z in range(self.height):
                 for x in range(self.width):
-                    if self.grid[z][x] != TileType.IMPASSABLE:
+                    # Solo considerar celdas que están libres (intransitables)
+                    if not self._is_free(x, z):
                         continue
                     
                     # Verificar si tiene vecino campo
@@ -166,6 +172,7 @@ class WorldGenerator:
                         self.infestation_grid[z][x] = random.randint(0, 100)
                         new_fields.add((x, z))
             
+            # Actualizar el conjunto de campos con los nuevos
             field_cells.update(new_fields)
 
     def _count_connected_fields(self) -> int:
@@ -239,20 +246,24 @@ class WorldGenerator:
 
     def generate(
         self,
-        road_branch_chance: float = 0.6,
-        max_road_length: int = 10,
-        field_chance: float = 0.9,
-        field_growth_chance: float = 0.55,
+        road_branch_chance: float = 0.6,  # Más caminos para mejor distribución
+        max_road_length: int = 10,  # Caminos más largos
+        field_chance: float = 0.9,  # Alta probabilidad de campos iniciales
+        field_growth_chance: float = 0.55,  # Mayor crecimiento
         min_fields: int = 5,
         min_roads: int = 10,
-        max_attempts: int = 20
+        max_attempts: int = 30
     ) -> bool:
         """
-        Genera el mundo con reintentos hasta cumplir requisitos mínimos
+        Genera el mundo con reintentos hasta cumplir requisitos mínimos.
+        Si después de varios intentos no se cumplen los requisitos, acepta el mejor resultado.
         
         Returns:
             bool: True si se generó exitosamente
         """
+        best_attempt = None
+        best_score = -1
+        
         for attempt in range(max_attempts):
             self._reset()
             
@@ -262,13 +273,19 @@ class WorldGenerator:
             # 2. Generar caminos ramificados
             road_cells = self._generate_roads(bx, bz, road_branch_chance, max_road_length)
             
-            # 3. Colocar campos iniciales
+            # 3. Colocar campos iniciales (adyacentes a caminos, exactamente como CellModels)
             field_cells = self._place_initial_fields(road_cells, field_chance)
             
-            # 4. Expandir campos
+            # 4. Expandir campos (exactamente 4 rondas como CellModels)
             self._grow_fields(field_cells, field_growth_chance, rounds=4)
             
-            # 5. Calcular estadísticas
+            # 5. Llenar espacios vacíos con intransitables (como CellModels)
+            for z in range(self.height):
+                for x in range(self.width):
+                    if self.grid[z][x] is None:
+                        self.grid[z][x] = TileType.IMPASSABLE
+            
+            # 6. Calcular estadísticas
             self._calculate_stats()
             
             # Verificar requisitos mínimos
@@ -277,10 +294,49 @@ class WorldGenerator:
                       f"{self.stats['field_count']} campos, {self.stats['road_count']} caminos")
                 return True
             
-            print(f"⚠️ Intento {attempt + 1}: "
-                  f"{self.stats['field_count']} campos, {self.stats['road_count']} caminos")
+            # Calcular score para guardar el mejor intento
+            # Score = campos + caminos (priorizando que ambos estén cerca de los mínimos)
+            field_score = min(self.stats['field_count'] / min_fields, 1.0) if min_fields > 0 else 0
+            road_score = min(self.stats['road_count'] / min_roads, 1.0) if min_roads > 0 else 0
+            current_score = field_score * 0.5 + road_score * 0.5
+            
+            if current_score > best_score:
+                best_score = current_score
+                # Convertir None a IMPASSABLE antes de guardar
+                grid_copy = []
+                for row in self.grid:
+                    grid_copy.append([TileType.IMPASSABLE if cell is None else cell for cell in row])
+                best_attempt = {
+                    'grid': grid_copy,
+                    'crop_grid': [row[:] for row in self.crop_grid],
+                    'infestation_grid': [row[:] for row in self.infestation_grid],
+                    'stats': self.stats.copy()
+                }
+            
+            # Después de la mitad de los intentos, si tenemos un resultado razonable, aceptarlo
+            if attempt >= max_attempts // 2 and best_attempt:
+                # Aceptar si tenemos al menos 70% de los requisitos mínimos
+                if (self.stats['field_count'] >= min_fields * 0.7 and 
+                    self.stats['road_count'] >= min_roads * 0.7):
+                    print(f"⚠️ Aceptando resultado parcial en intento {attempt + 1}: "
+                          f"{self.stats['field_count']} campos, {self.stats['road_count']} caminos")
+                    return True
+            
+            if attempt < 10 or (attempt + 1) % 5 == 0:
+                print(f"⚠️ Intento {attempt + 1}: "
+                      f"{self.stats['field_count']} campos, {self.stats['road_count']} caminos")
         
-        print(f"❌ No se cumplieron los requisitos en {max_attempts} intentos")
+        # Si llegamos aquí, usar el mejor intento guardado
+        if best_attempt:
+            self.grid = best_attempt['grid']
+            self.crop_grid = best_attempt['crop_grid']
+            self.infestation_grid = best_attempt['infestation_grid']
+            self.stats = best_attempt['stats']
+            print(f"⚠️ Usando mejor resultado encontrado: "
+                  f"{self.stats['field_count']} campos, {self.stats['road_count']} caminos")
+            return True
+        
+        print(f"❌ No se pudo generar un mundo válido en {max_attempts} intentos")
         return False
 
     def export(self) -> Dict[str, Any]:
