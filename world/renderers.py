@@ -17,6 +17,21 @@ class PNGRenderer(BaseRenderer):
         return bytes(data) if data else b''
 
 
+class GIFRenderer(BaseRenderer):
+    """Renderer para imágenes GIF animadas"""
+    media_type = 'image/gif'
+    format = 'gif'
+    
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        # Si data es bytes, devolverlo directamente
+        if isinstance(data, bytes):
+            return data
+        # Si es otro tipo, intentar convertirlo a bytes
+        if hasattr(data, 'content'):
+            return data.content
+        return bytes(data) if data else b''
+
+
 class CompactJSONRenderer(JSONRenderer):
     """Renderer que formatea JSON con listas compactas"""
     

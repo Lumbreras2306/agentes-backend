@@ -9,6 +9,7 @@ import matplotlib.patches as mpatches
 import matplotlib.colors as mcolors
 import numpy as np
 from io import BytesIO
+from PIL import Image
 
 from .models import World, WorldTemplate
 from .serializers import (
@@ -18,7 +19,8 @@ from .serializers import (
     WorldTemplateSerializer
 )
 from .world_generator import WorldGenerator, TileType, CropType
-from .renderers import PNGRenderer
+from .renderers import PNGRenderer, GIFRenderer
+from .pathfinding import Pathfinder
 
 
 class WorldTemplateViewSet(viewsets.ModelViewSet):
@@ -79,6 +81,7 @@ class WorldViewSet(viewsets.ModelViewSet):
                 'max_road_length': world.template.max_road_length,
                 'field_chance': world.template.field_chance,
                 'field_growth_chance': world.template.field_growth_chance,
+                'field_growth_rounds': getattr(world.template, 'field_growth_rounds', 10),
                 'min_fields': world.template.min_fields,
                 'min_roads': world.template.min_roads,
                 'max_attempts': world.template.max_attempts,
@@ -89,6 +92,7 @@ class WorldViewSet(viewsets.ModelViewSet):
                 'max_road_length': 10,
                 'field_chance': 0.9,
                 'field_growth_chance': 0.55,
+                'field_growth_rounds': 10,
                 'min_fields': 5,
                 'min_roads': 10,
                 'max_attempts': 30,
@@ -364,3 +368,222 @@ class WorldViewSet(viewsets.ModelViewSet):
         buffer.close()
         
         return HttpResponse(image_data, content_type='image/png')
+    
+    @action(detail=True, methods=['get'], renderer_classes=[GIFRenderer])
+    def visualize_dijkstra_animated(self, request, pk=None):
+        """
+        Visualiza múltiples tractores moviéndose a destinos aleatorios con detección de colisiones.
+        Muestra el avance de los tractores y los caminos tomados.
+        
+        GET /api/worlds/{id}/visualize_dijkstra_animated/
+        GET /api/worlds/{id}/visualize_dijkstra_animated/?tractors=3&speed=300
+        Parámetros:
+        - tractors: Número de tractores (default: 3)
+        - speed: ms entre frames (default: 300ms, rango: 100-1000ms)
+        """
+        world = self.get_object()
+        
+        # Obtener número de tractores
+        num_tractors = int(request.query_params.get('tractors', 3))
+        num_tractors = max(1, min(10, num_tractors))  # Entre 1 y 10
+        
+        # Crear pathfinder y encontrar caminos para múltiples tractores
+        pathfinder = Pathfinder(world.grid, world.width, world.height)
+        tractor_paths_data = pathfinder.find_paths_to_random_destinations(
+            num_tractors=num_tractors,
+            prefer_roads=True
+        )
+        
+        if tractor_paths_data is None or len(tractor_paths_data) == 0:
+            return Response(
+                {'error': 'No se pudieron encontrar caminos válidos'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Extraer caminos y destinos
+        tractor_paths = [data['path'] for data in tractor_paths_data]
+        destinations = [data['end'] for data in tractor_paths_data]
+        barn_pos = tractor_paths_data[0]['start']
+        
+        # Simular movimiento de tractores
+        simulation_steps = pathfinder.simulate_tractors(tractor_paths, max_steps=2000)
+        
+        if not simulation_steps:
+            return Response(
+                {'error': 'No se pudo simular el movimiento'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Limitar número de frames
+        MAX_FRAMES = 200
+        if len(simulation_steps) > MAX_FRAMES:
+            step_indices = [int(i * len(simulation_steps) / MAX_FRAMES) for i in range(MAX_FRAMES)]
+            if step_indices[-1] != len(simulation_steps) - 1:
+                step_indices[-1] = len(simulation_steps) - 1
+            sampled_steps = [simulation_steps[i] for i in step_indices]
+        else:
+            sampled_steps = simulation_steps
+        
+        # Obtener velocidad de animación (ms entre frames)
+        speed = int(request.query_params.get('speed', 300))
+        duration = max(100, min(1000, speed))  # Entre 100ms y 1000ms
+        
+        # Pre-calcular colores RGB
+        def hex_to_rgb(hex_color):
+            hex_color = hex_color.lstrip('#')
+            return tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+        
+        # Colores base pre-calculados
+        colors_rgb = {
+            int(TileType.IMPASSABLE): hex_to_rgb('#2d2d2d'),  # Gris oscuro
+            int(TileType.ROAD): hex_to_rgb('#8b7355'),        # Café para camino
+            int(TileType.FIELD): hex_to_rgb('#7ec850'),       # Verde para campo
+            int(TileType.BARN): hex_to_rgb('#c44536'),        # Rojo para granero
+        }
+        
+        height = len(world.grid)
+        width = len(world.grid[0]) if world.grid else 0
+        
+        # Pre-calcular grid base
+        base_grid = np.zeros((height, width, 3))
+        for i, row in enumerate(world.grid):
+            for j, cell in enumerate(row):
+                cell_value = int(cell) if cell is not None else 0
+                base_grid[i, j] = colors_rgb.get(cell_value, hex_to_rgb('#000000'))
+        
+        # Generar frames
+        frames = []
+        
+        # Rastrear caminos recorridos por cada tractor
+        paths_taken = [set() for _ in range(num_tractors)]
+        
+        for step_idx, step_state in enumerate(sampled_steps):
+            # Crear figura
+            fig, ax = plt.subplots(figsize=(12, 12))
+            
+            # Copiar grid base
+            rgb_grid = base_grid.copy()
+            
+            # Actualizar caminos recorridos - agregar todas las posiciones hasta el índice actual
+            for tractor_id in range(num_tractors):
+                if tractor_id < len(step_state):
+                    path_index = step_state[tractor_id].get('path_index', 0)
+                    path = tractor_paths[tractor_id]
+                    # Agregar todas las posiciones del camino hasta el índice actual
+                    for i in range(min(path_index + 1, len(path))):
+                        paths_taken[tractor_id].add(path[i])
+            
+            # Pintar caminos recorridos hasta ahora (más tenue)
+            for tractor_id in range(num_tractors):
+                if tractor_id < len(step_state):
+                    tractor_color = step_state[tractor_id]['color']
+                    rgb = hex_to_rgb(tractor_color)
+                    for x, z in paths_taken[tractor_id]:
+                        # No pintar si es barn, destino, o posición actual del tractor
+                        if (x, z) != barn_pos and (x, z) not in destinations:
+                            current_tractor_pos = step_state[tractor_id]['position']
+                            if (x, z) != current_tractor_pos:
+                                rgb_grid[z, x] = tuple(c * 0.5 for c in rgb)  # 50% de opacidad
+            
+            # Pintar tractores actuales
+            for tractor_id, tractor_state in enumerate(step_state):
+                x, z = tractor_state['position']
+                tractor_color = hex_to_rgb(tractor_state['color'])
+                
+                if tractor_state.get('waiting', False):
+                    # Tractor esperando - color más oscuro
+                    rgb_grid[z, x] = tuple(c * 0.6 for c in tractor_color)
+                else:
+                    # Tractor moviéndose - color completo
+                    rgb_grid[z, x] = tractor_color
+                
+                # Agregar posición actual al camino recorrido
+                paths_taken[tractor_id].add((x, z))
+            
+            # Resaltar barn
+            barn_x, barn_z = barn_pos
+            rgb_grid[barn_z, barn_x] = hex_to_rgb('#c44536')
+            
+            # Resaltar destinos con el color de su tractor
+            for tractor_id, dest in enumerate(destinations):
+                dest_x, dest_z = dest
+                if tractor_id < len(step_state):
+                    dest_color = hex_to_rgb(step_state[tractor_id]['color'])
+                    # Destino con borde más oscuro
+                    rgb_grid[dest_z, dest_x] = tuple(min(1.0, c * 1.2) for c in dest_color)
+            
+            # Mostrar la imagen
+            ax.imshow(rgb_grid, interpolation='nearest')
+            ax.set_title(
+                f'{world.name} - Tractores (Paso {step_idx + 1}/{len(sampled_steps)})',
+                fontsize=16,
+                fontweight='bold'
+            )
+            ax.set_xlabel('X', fontsize=12)
+            ax.set_ylabel('Z', fontsize=12)
+            ax.grid(True, alpha=0.3, color='white', linewidth=0.5)
+            
+            # Crear leyenda
+            legend_elements = [
+                mpatches.Patch(color='#2d2d2d', label='Intransitable'),
+                mpatches.Patch(color='#8b7355', label='Camino'),
+                mpatches.Patch(color='#7ec850', label='Campo'),
+                mpatches.Patch(color='#c44536', label='Granero (Inicio)'),
+            ]
+            
+            # Agregar tractores y destinos a la leyenda
+            for tractor_id in range(num_tractors):
+                if tractor_id < len(step_state):
+                    color = step_state[tractor_id]['color']
+                    legend_elements.append(
+                        mpatches.Patch(color=color, label=f'Tractor {tractor_id + 1}')
+                    )
+                    # Destino con mismo color pero más brillante
+                    dest_rgb = hex_to_rgb(color)
+                    dest_color = tuple(min(1.0, c * 1.3) for c in dest_rgb)
+                    legend_elements.append(
+                        mpatches.Patch(color=dest_color, label=f'Destino {tractor_id + 1}')
+                    )
+            
+            ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1, 1), 
+                     fontsize=9, framealpha=0.9)
+            
+            # Guardar frame
+            buffer = BytesIO()
+            plt.tight_layout()
+            plt.savefig(buffer, format='png', dpi=100, bbox_inches='tight', pad_inches=0.1)
+            buffer.seek(0)
+            frame = Image.open(buffer)
+            if frame.width > 1000:
+                frame = frame.resize((1000, 1000), Image.Resampling.LANCZOS)
+            frames.append(frame.copy())
+            frame.close()
+            plt.close()
+            buffer.close()
+        
+        # Crear GIF animado
+        if not frames:
+            return Response(
+                {'error': 'No se pudieron generar frames'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Guardar GIF en buffer
+        gif_buffer = BytesIO()
+        frames[0].save(
+            gif_buffer,
+            format='GIF',
+            append_images=frames[1:],
+            save_all=True,
+            duration=duration,
+            loop=0
+        )
+        gif_buffer.seek(0)
+        gif_data = gif_buffer.getvalue()
+        gif_buffer.close()
+        
+        # Cerrar frames
+        for frame in frames:
+            frame.close()
+        
+        return HttpResponse(gif_data, content_type='image/gif')

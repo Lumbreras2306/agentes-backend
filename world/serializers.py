@@ -43,8 +43,8 @@ class WorldGenerateSerializer(serializers.Serializer):
     """Serializer para generar un nuevo mundo"""
     name = serializers.CharField(max_length=100)
     template_id = serializers.UUIDField(required=False, allow_null=True)
-    width = serializers.IntegerField(default=20, min_value=5, max_value=100)
-    height = serializers.IntegerField(default=20, min_value=5, max_value=100)
+    width = serializers.IntegerField(default=20, min_value=5, max_value=100, required=False)
+    height = serializers.IntegerField(default=20, min_value=5, max_value=100, required=False)
     seed = serializers.IntegerField(required=False, allow_null=True)
     
     # Parámetros opcionales de generación
@@ -52,6 +52,7 @@ class WorldGenerateSerializer(serializers.Serializer):
     max_road_length = serializers.IntegerField(required=False, min_value=1)
     field_chance = serializers.FloatField(required=False, min_value=0.0, max_value=1.0)
     field_growth_chance = serializers.FloatField(required=False, min_value=0.0, max_value=1.0)
+    field_growth_rounds = serializers.IntegerField(required=False, min_value=1, max_value=50, default=10)
     min_fields = serializers.IntegerField(required=False, min_value=0)
     min_roads = serializers.IntegerField(required=False, min_value=0)
     max_attempts = serializers.IntegerField(required=False, min_value=1, max_value=100)
@@ -83,6 +84,7 @@ class WorldGenerateSerializer(serializers.Serializer):
                 'max_road_length': template.max_road_length,
                 'field_chance': template.field_chance,
                 'field_growth_chance': template.field_growth_chance,
+                'field_growth_rounds': getattr(template, 'field_growth_rounds', 10),  # Por si no existe en el modelo
                 'min_fields': template.min_fields,
                 'min_roads': template.min_roads,
                 'max_attempts': template.max_attempts,
@@ -93,6 +95,7 @@ class WorldGenerateSerializer(serializers.Serializer):
                 'max_road_length': 10,
                 'field_chance': 0.9,
                 'field_growth_chance': 0.55,
+                'field_growth_rounds': 10,
                 'min_fields': 5,
                 'min_roads': 10,
                 'max_attempts': 30,

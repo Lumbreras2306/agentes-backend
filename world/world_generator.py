@@ -250,6 +250,7 @@ class WorldGenerator:
         max_road_length: int = 10,  # Caminos más largos
         field_chance: float = 0.9,  # Alta probabilidad de campos iniciales
         field_growth_chance: float = 0.55,  # Mayor crecimiento
+        field_growth_rounds: int = 10,  # Número de rondas de crecimiento de campos
         min_fields: int = 5,
         min_roads: int = 10,
         max_attempts: int = 30
@@ -273,13 +274,13 @@ class WorldGenerator:
             # 2. Generar caminos ramificados
             road_cells = self._generate_roads(bx, bz, road_branch_chance, max_road_length)
             
-            # 3. Colocar campos iniciales (adyacentes a caminos, exactamente como CellModels)
+            # 3. Colocar campos iniciales
             field_cells = self._place_initial_fields(road_cells, field_chance)
             
-            # 4. Expandir campos (exactamente 4 rondas como CellModels)
-            self._grow_fields(field_cells, field_growth_chance, rounds=4)
+            # 4. Expandir campos
+            self._grow_fields(field_cells, field_growth_chance, rounds=field_growth_rounds)
             
-            # 5. Llenar espacios vacíos con intransitables (como CellModels)
+            # 5. Llenar espacios vacíos con intransitables
             for z in range(self.height):
                 for x in range(self.width):
                     if self.grid[z][x] is None:
