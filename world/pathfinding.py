@@ -560,3 +560,36 @@ class Pathfinder:
         
         return simulation_steps
 
+
+class DynamicPathfinder(Pathfinder):
+    """
+    Pathfinder que usa pesos dinámicos para campos.
+    Extiende el Pathfinder base para considerar pesos adicionales.
+    Útil para agentes que deben evitar pisar campos repetidamente.
+    """
+    
+    def __init__(self, grid: List[List[int]], width: int, height: int, field_weights: Dict[Tuple[int, int], float]):
+        """
+        Inicializa el pathfinder con pesos dinámicos.
+        
+        Args:
+            grid: Grid del mundo
+            width: Ancho del grid
+            height: Alto del grid
+            field_weights: Diccionario de pesos adicionales por posición de campo
+        """
+        super().__init__(grid, width, height)
+        self.field_weights = field_weights
+    
+    def _get_cost(self, x: int, z: int, prefer_roads: bool = True) -> float:
+        """
+        Calcula el costo de moverse a una celda, incluyendo pesos dinámicos.
+        """
+        base_cost = super()._get_cost(x, z, prefer_roads)
+        
+        # Si es un campo, agregar peso dinámico
+        if self.grid[z][x] == TileType.FIELD:
+            dynamic_weight = self.field_weights.get((x, z), 0.0)
+            return base_cost + dynamic_weight
+        
+        return base_cost

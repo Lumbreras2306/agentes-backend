@@ -18,7 +18,6 @@ INSTALLED_APPS = [
     'rest_framework',
     'world',
     'agents',
-    'blackboard',
 ]
 
 MIDDLEWARE = [
