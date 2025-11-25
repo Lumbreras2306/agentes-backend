@@ -1,0 +1,122 @@
+.simulations-page {
+  padding: 2rem 0;
+}
+
+.simulations-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 1.5rem;
+}
+
+.simulation-card {
+  background: var(--white);
+  border-radius: 1rem;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.simulation-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 12px rgba(0, 0, 0, 0.15);
+}
+
+.simulation-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  color: var(--white);
+}
+
+.simulation-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.status-text {
+  text-transform: capitalize;
+  font-weight: 600;
+}
+
+.simulation-card-body {
+  padding: 1.5rem;
+}
+
+.simulation-card-body p {
+  margin-bottom: 1rem;
+  color: var(--dark-light);
+}
+
+.simulation-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.stat-label {
+  font-size: 0.875rem;
+  color: var(--dark-light);
+}
+
+.stat-value {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--dark);
+}
+
+.simulation-date {
+  font-size: 0.875rem;
+  color: var(--dark-light);
+  margin-top: 1rem;
+}
+
+.simulation-card-footer {
+  padding: 1.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.simulation-card-footer .btn {
+  width: 100%;
+  text-align: center;
+}
+
+.create-form select {
+  padding: 0.75rem;
+  border: 2px solid var(--border);
+  border-radius: 0.5rem;
+  font-size: 1rem;
+  transition: border-color 0.2s;
+  background: var(--white);
+}
+
+.create-form select:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+@media (max-width: 768px) {
+  .simulations-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .simulation-stats {
+    grid-template-columns: 1fr;
+  }
+}
+

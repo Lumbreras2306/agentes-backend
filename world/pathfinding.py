@@ -4,7 +4,7 @@ Implementa Dijkstra con prioridad para caminos (ROAD) y luego campos (FIELD).
 """
 import heapq
 import random
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Set
 from .world_generator import TileType
 
 
@@ -123,16 +123,70 @@ class Pathfinder:
     
     def find_barn(self) -> Optional[Tuple[int, int]]:
         """
-        Encuentra la posición del barn en el grid.
+        Encuentra la posición central del barn en el grid.
+        El barn tiene 5 casillas en línea, retorna la posición central.
         
         Returns:
-            Tupla (x, z) con la posición del barn, o None si no se encuentra
+            Tupla (x, z) con la posición central del barn, o None si no se encuentra
         """
+        barn_positions = []
         for z in range(self.height):
             for x in range(self.width):
                 if self.grid[z][x] == TileType.BARN:
-                    return (x, z)
-        return None
+                    barn_positions.append((x, z))
+        
+        if not barn_positions:
+            return None
+        
+        # Si hay múltiples casillas de granero (5 en línea), encontrar la central
+        if len(barn_positions) > 1:
+            # Ordenar las posiciones para encontrar la central
+            # Si están en línea horizontal, ordenar por x
+            # Si están en línea vertical, ordenar por z
+            sorted_by_x = sorted(barn_positions, key=lambda p: p[0])
+            sorted_by_z = sorted(barn_positions, key=lambda p: p[1])
+            
+            # Verificar si están en línea horizontal (misma z)
+            if len(set(z for x, z in barn_positions)) == 1:
+                # Línea horizontal: la central es la del medio
+                return sorted_by_x[len(sorted_by_x) // 2]
+            # Si están en línea vertical (misma x)
+            elif len(set(x for x, z in barn_positions)) == 1:
+                # Línea vertical: la central es la del medio
+                return sorted_by_z[len(sorted_by_z) // 2]
+            else:
+                # Forma irregular, usar centroide
+                avg_x = sum(x for x, z in barn_positions) // len(barn_positions)
+                avg_z = sum(z for x, z in barn_positions) // len(barn_positions)
+                center_pos = min(barn_positions, 
+                               key=lambda pos: abs(pos[0] - avg_x) + abs(pos[1] - avg_z))
+                return center_pos
+        
+        # Si solo hay una casilla, retornarla
+        return barn_positions[0]
+    
+    def find_all_barn_cells(self) -> List[Tuple[int, int]]:
+        """
+        Encuentra todas las celdas del granero (5 celdas en línea).
+        
+        Returns:
+            Lista de tuplas (x, z) con todas las posiciones del granero, ordenadas
+        """
+        barn_positions = []
+        for z in range(self.height):
+            for x in range(self.width):
+                if self.grid[z][x] == TileType.BARN:
+                    barn_positions.append((x, z))
+        
+        if not barn_positions:
+            return []
+        
+        # Ordenar las posiciones: primero por z, luego por x
+        # Esto asegura que si están en línea horizontal, estén ordenadas de izquierda a derecha
+        # Si están en línea vertical, estén ordenadas de arriba a abajo
+        barn_positions.sort(key=lambda p: (p[1], p[0]))
+        
+        return barn_positions
     
     def find_max_infestation(self, infestation_grid: List[List[int]]) -> Optional[Tuple[int, int]]:
         """
@@ -154,6 +208,34 @@ class Pathfinder:
                     max_pos = (x, z)
         
         return max_pos
+    
+    def find_top_infested_positions(
+        self, 
+        infestation_grid: List[List[int]], 
+        count: int
+    ) -> List[Tuple[int, int]]:
+        """
+        Encuentra las N celdas con mayor nivel de infestación.
+        
+        Args:
+            infestation_grid: Matriz 2D con niveles de infestación (0-100)
+            count: Número de posiciones a encontrar
+        
+        Returns:
+            Lista de tuplas (x, z) ordenadas por nivel de infestación (mayor a menor)
+        """
+        infested_positions = []
+        
+        for z in range(self.height):
+            for x in range(self.width):
+                if self._is_passable(x, z) and infestation_grid[z][x] > 0:
+                    infested_positions.append((x, z, infestation_grid[z][x]))
+        
+        # Ordenar por nivel de infestación (mayor a menor)
+        infested_positions.sort(key=lambda item: item[2], reverse=True)
+        
+        # Retornar solo las posiciones (sin el nivel)
+        return [(x, z) for x, z, _ in infested_positions[:count]]
     
     def dijkstra(
         self, 
@@ -418,28 +500,430 @@ class Pathfinder:
             - 'end': Tupla (x, z) del destino
             O None si no se puede encontrar
         """
-        # Encontrar barn
-        barn_pos = self.find_barn()
-        if barn_pos is None:
-            return None
+        # Limitar a máximo 5 tractores (uno por celda del granero)
+        num_tractors = min(5, num_tractors)
         
-        # Encontrar destinos aleatorios
-        destinations = self.find_random_passable_cells(num_tractors)
-        if len(destinations) < num_tractors:
-            return None
+        # Encontrar todas las celdas del granero
+        barn_cells = self.find_all_barn_cells()
+        if not barn_cells or len(barn_cells) < num_tractors:
+            # Si no hay suficientes celdas, usar la posición central
+            barn_pos = self.find_barn()
+            if barn_pos is None:
+                return None
+            # Usar la misma posición para todos
+            barn_start_positions = [barn_pos] * num_tractors
+        else:
+            # Asignar una celda diferente del granero a cada tractor
+            barn_start_positions = barn_cells[:num_tractors]
         
+        # Encontrar destinos evitando conflictos (destinos en el mismo camino)
         results = []
-        for dest in destinations:
-            path = self.dijkstra(barn_pos, dest, prefer_roads=prefer_roads, capture_steps=False)
-            if path is not None:
+        used_destinations = set()
+        used_path_positions = set()  # Posiciones ya usadas en caminos de otros tractores
+        max_attempts_per_tractor = 30
+        
+        for tractor_id in range(num_tractors):
+            path_found = False
+            for attempt in range(max_attempts_per_tractor):
+                # Encontrar un destino aleatorio que no haya sido usado
+                candidate_destinations = self.find_random_passable_cells(10)
+                if not candidate_destinations:
+                    break
+                
+                # Filtrar destinos ya usados
+                available_destinations = [d for d in candidate_destinations if d not in used_destinations]
+                if not available_destinations:
+                    break
+                
+                dest = random.choice(available_destinations)
+                
+                # Calcular el camino desde la celda asignada del granero
+                start_pos = barn_start_positions[tractor_id]
+                path = self.dijkstra(start_pos, dest, prefer_roads=prefer_roads, capture_steps=False)
+                if path is None:
+                    continue
+                
+                # Optimizar el camino
                 optimized_path = self._optimize_path_with_straight_lines(path)
-                results.append({
-                    'path': optimized_path,
-                    'start': barn_pos,
-                    'end': dest
-                })
+                
+                # Asegurar que el camino empiece en la posición inicial del tractor
+                if optimized_path and optimized_path[0] != start_pos:
+                    optimized_path = [start_pos] + optimized_path
+                
+                # Verificar conflictos: el destino no debe estar en el camino de otro tractor
+                # (excepto el destino final de otros tractores)
+                conflicts = False
+                for existing_result in results:
+                    existing_path = existing_result['path']
+                    existing_dest = existing_result['end']
+                    
+                    # Verificar si el nuevo destino está en el camino de otro tractor (no en su destino final)
+                    if dest in existing_path[:-1]:  # Excluir el último punto (destino final)
+                        conflicts = True
+                        break
+                    
+                    # Verificar si algún punto del nuevo camino (excepto destino) está en el destino de otro tractor
+                    for path_pos in optimized_path[:-1]:  # Excluir el destino final
+                        if path_pos == existing_dest:
+                            conflicts = True
+                            break
+                    
+                    if conflicts:
+                        break
+                
+                if not conflicts:
+                    results.append({
+                        'path': optimized_path,
+                        'start': start_pos,  # Usar la celda específica del granero
+                        'end': dest
+                    })
+                    used_destinations.add(dest)
+                    path_found = True
+                    break
+            
+            # Si no se encontró un camino sin conflictos después de varios intentos,
+            # usar el mejor disponible (aunque pueda tener conflictos menores)
+            if not path_found:
+                candidate_destinations = self.find_random_passable_cells(10)
+                available_destinations = [d for d in candidate_destinations if d not in used_destinations]
+                if available_destinations:
+                    dest = random.choice(available_destinations)
+                    start_pos = barn_start_positions[tractor_id]
+                    path = self.dijkstra(start_pos, dest, prefer_roads=prefer_roads, capture_steps=False)
+                    if path is not None:
+                        optimized_path = self._optimize_path_with_straight_lines(path)
+                        # Asegurar que el camino empiece en la posición inicial del tractor
+                        if optimized_path and optimized_path[0] != start_pos:
+                            optimized_path = [start_pos] + optimized_path
+                        results.append({
+                            'path': optimized_path,
+                            'start': start_pos,  # Usar la celda específica del granero
+                            'end': dest
+                        })
+                        used_destinations.add(dest)
         
         return results if results else None
+    
+    def find_paths_to_infested_destinations(
+        self,
+        infestation_grid: List[List[int]],
+        num_tractors: int,
+        prefer_roads: bool = True
+    ) -> Optional[List[Dict]]:
+        """
+        Encuentra caminos desde el barn hasta los puntos más infestados del mapa.
+        
+        Args:
+            infestation_grid: Matriz 2D con niveles de infestación (0-100)
+            num_tractors: Número de tractores (y destinos)
+            prefer_roads: Si True, prioriza caminos sobre campos
+        
+        Returns:
+            Lista de diccionarios, cada uno con:
+            - 'path': Lista de tuplas (x, z) del camino
+            - 'start': Tupla (x, z) del barn
+            - 'end': Tupla (x, z) del destino
+            - 'infestation': Nivel de infestación del destino
+            O None si no se puede encontrar
+        """
+        # Limitar a máximo 5 tractores (uno por celda del granero)
+        num_tractors = min(5, num_tractors)
+        
+        # Encontrar todas las celdas del granero
+        barn_cells = self.find_all_barn_cells()
+        if not barn_cells or len(barn_cells) < num_tractors:
+            # Si no hay suficientes celdas, usar la posición central
+            barn_pos = self.find_barn()
+            if barn_pos is None:
+                return None
+            # Usar la misma posición para todos
+            barn_start_positions = [barn_pos] * num_tractors
+        else:
+            # Asignar una celda diferente del granero a cada tractor
+            barn_start_positions = barn_cells[:num_tractors]
+        
+        # Encontrar los puntos más infestados
+        infested_positions = self.find_top_infested_positions(infestation_grid, num_tractors * 2)
+        if len(infested_positions) < num_tractors:
+            return None
+        
+        # Asignar destinos evitando conflictos
+        results = []
+        used_destinations = set()
+        
+        for tractor_id in range(num_tractors):
+            path_found = False
+            for infested_pos in infested_positions:
+                if infested_pos in used_destinations:
+                    continue
+                
+                dest = infested_pos
+                start_pos = barn_start_positions[tractor_id]
+                
+                # Calcular el camino desde la celda asignada del granero
+                path = self.dijkstra(start_pos, dest, prefer_roads=prefer_roads, capture_steps=False)
+                if path is None:
+                    continue
+                
+                # Optimizar el camino
+                optimized_path = self._optimize_path_with_straight_lines(path)
+                
+                # Asegurar que el camino empiece en la posición inicial del tractor
+                if optimized_path and optimized_path[0] != start_pos:
+                    optimized_path = [start_pos] + optimized_path
+                
+                # Verificar conflictos: el destino no debe estar en el camino de otro tractor
+                conflicts = False
+                for existing_result in results:
+                    existing_path = existing_result['path']
+                    existing_dest = existing_result['end']
+                    
+                    # Verificar si el nuevo destino está en el camino de otro tractor
+                    if dest in existing_path[:-1]:
+                        conflicts = True
+                        break
+                    
+                    # Verificar si algún punto del nuevo camino está en el destino de otro tractor
+                    for path_pos in optimized_path[:-1]:
+                        if path_pos == existing_dest:
+                            conflicts = True
+                            break
+                    
+                    if conflicts:
+                        break
+                
+                if not conflicts:
+                    results.append({
+                        'path': optimized_path,
+                        'start': start_pos,
+                        'end': dest,
+                        'infestation': infestation_grid[dest[1]][dest[0]]
+                    })
+                    used_destinations.add(dest)
+                    path_found = True
+                    break
+            
+            if not path_found:
+                # Si no se encontró un destino sin conflictos, usar el siguiente más infestado disponible
+                for infested_pos in infested_positions:
+                    if infested_pos not in used_destinations:
+                        dest = infested_pos
+                        start_pos = barn_start_positions[tractor_id]
+                        path = self.dijkstra(start_pos, dest, prefer_roads=prefer_roads, capture_steps=False)
+                        if path is not None:
+                            optimized_path = self._optimize_path_with_straight_lines(path)
+                            if optimized_path and optimized_path[0] != start_pos:
+                                optimized_path = [start_pos] + optimized_path
+                            results.append({
+                                'path': optimized_path,
+                                'start': start_pos,
+                                'end': dest,
+                                'infestation': infestation_grid[dest[1]][dest[0]]
+                            })
+                            used_destinations.add(dest)
+                            break
+        
+        return results if results else None
+    
+    def generate_drone_survey_path(self, start_pos: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """
+        Genera un patrón de sobrevuelo para el dron scout.
+        El dron sobrevuela todo el mapa en un patrón de grid para analizar la infestación.
+        Empieza en el granero, va a una esquina, y luego comienza el patrón.
+        Termina en el granero.
+        
+        Args:
+            start_pos: Posición inicial del dron (granero)
+        
+        Returns:
+            Lista de tuplas (x, z) representando el camino de sobrevuelo
+        """
+        path = [start_pos]
+        visited = {start_pos}
+        
+        # Primero, ir a una esquina (esquina superior izquierda)
+        corner_pos = (0, 0)
+        if corner_pos != start_pos:
+            # Calcular camino desde el granero hasta la esquina
+            corner_path = self.dijkstra(start_pos, corner_pos, prefer_roads=False, capture_steps=False)
+            if corner_path and len(corner_path) > 1:
+                # Agregar el camino a la esquina (sin incluir el primer punto que ya está)
+                path.extend(corner_path[1:])
+                visited.update(corner_path)
+        
+        # Patrón de sobrevuelo: líneas horizontales alternando dirección
+        # El dron analiza 3 filas a la vez (la actual y las dos adyacentes arriba y abajo)
+        # Si está en la fila z, analiza z-1, z, z+1
+        # Para evitar desperdiciar capacidad, el espaciado debe ser 3:
+        # - Fila 1: analiza 0, 1, 2
+        # - Fila 4: analiza 3, 4, 5 (la fila 2 ya está descubierta, pero 3, 4, 5 son nuevas)
+        # - Fila 7: analiza 6, 7, 8
+        spacing = 3
+        
+        # Empezar desde la fila 1 (no 0) para que pueda analizar la fila 0 arriba
+        # Si empezamos en 0, no hay fila arriba para analizar
+        start_row = 1
+        
+        # Primero agregar la fila 0 (después del camino a la esquina)
+        # El dron estará en fila 1, pero analizará fila 0 también
+        first_row_positions = []
+        for x in range(0, self.width):
+            pos = (x, 0)
+            if pos not in visited and self._in_bounds(x, 0):
+                first_row_positions.append(pos)
+                visited.add(pos)
+        
+        # Encontrar dónde termina el camino a la esquina para insertar la fila 0
+        corner_end_idx = len(path)
+        for i, p in enumerate(path):
+            if p == corner_pos:
+                corner_end_idx = i + 1
+                break
+        
+        # Insertar la fila 0 después del camino a la esquina
+        if first_row_positions:
+            path[corner_end_idx:corner_end_idx] = first_row_positions
+        
+        # Ahora el patrón principal con espaciado de 3
+        # El dron va a filas: 1, 4, 7, 10, etc.
+        # Cuando está en fila 1, analiza 0, 1, 2
+        # Cuando está en fila 4, analiza 3, 4, 5 (la fila 2 ya está descubierta pero no la analiza de nuevo)
+        for z in range(start_row, self.height, spacing):
+            if (z - start_row) % (spacing * 2) == 0:
+                # Ir de izquierda a derecha
+                for x in range(0, self.width):
+                    pos = (x, z)
+                    if pos not in visited and self._in_bounds(x, z):
+                        path.append(pos)
+                        visited.add(pos)
+            else:
+                # Ir de derecha a izquierda
+                for x in range(self.width - 1, -1, -1):
+                    pos = (x, z)
+                    if pos not in visited and self._in_bounds(x, z):
+                        path.append(pos)
+                        visited.add(pos)
+        
+        # Verificar si hay filas al final que no fueron cubiertas
+        # Si la última fila analizada fue z, entonces z+1 y z+2 también fueron descubiertas
+        # Pero si z+3 existe y no fue cubierta, necesitamos agregarla
+        last_analyzed_row = start_row + ((self.height - start_row - 1) // spacing) * spacing
+        if last_analyzed_row + 2 < self.height - 1:
+            # Hay filas al final que no fueron cubiertas
+            for z in range(last_analyzed_row + spacing, self.height):
+                for x in range(0, self.width):
+                    pos = (x, z)
+                    if pos not in visited and self._in_bounds(x, z):
+                        path.append(pos)
+                        visited.add(pos)
+        
+        # Regresar al granero al final
+        if path[-1] != start_pos:
+            # Calcular camino de regreso al granero
+            return_path = self.dijkstra(path[-1], start_pos, prefer_roads=False, capture_steps=False)
+            if return_path and len(return_path) > 1:
+                # Agregar el camino de regreso (sin incluir el último punto que ya está)
+                path.extend(return_path[1:])
+            else:
+                # Si no se puede calcular camino, agregar directamente
+                path.append(start_pos)
+        
+        return path
+    
+    def simulate_drone(
+        self,
+        drone_path: List[Tuple[int, int]],
+        infestation_grid: List[List[int]],
+        speed_multiplier: int = 2,
+        max_steps: int = 1000
+    ) -> List[Dict]:
+        """
+        Simula el movimiento de un dron scout.
+        El dron es más rápido que los tractores y vuela, por lo que no colisiona.
+        Revela la infestación de las celdas cuando pasa por ellas.
+        
+        Args:
+            drone_path: Camino del dron
+            infestation_grid: Grid de infestación (para revelar valores)
+            speed_multiplier: Multiplicador de velocidad (cuántas celdas avanza por paso)
+            max_steps: Número máximo de pasos de simulación
+        
+        Returns:
+            Lista de estados del dron en cada paso. Cada estado es un dict con:
+            - 'position': (x, z) posición actual
+            - 'path_index': índice en el camino
+            - 'arrived': bool si llegó al destino
+            - 'color': color del dron
+            - 'revealed_infestation': dict de posiciones reveladas hasta este paso {(x, z): nivel}
+        """
+        if not drone_path or len(drone_path) == 0:
+            return []
+        
+        simulation_steps = []
+        current_index = 0
+        drone_color = '#00ffff'  # Cyan para el dron
+        revealed_infestation = {}  # {"x,z": nivel} - usar strings como keys para JSON
+        
+        # Paso inicial: dron en el granero
+        initial_step = {
+            'position': drone_path[0],
+            'path_index': 0,
+            'arrived': False,
+            'color': drone_color,
+            'revealed_infestation': revealed_infestation.copy()
+        }
+        simulation_steps.append(initial_step)
+        
+        for step in range(max_steps):
+            if current_index >= len(drone_path) - 1:
+                # Dron llegó al destino
+                final_step = {
+                    'position': drone_path[-1],
+                    'path_index': len(drone_path) - 1,
+                    'arrived': True,
+                    'color': drone_color,
+                    'revealed_infestation': revealed_infestation.copy()
+                }
+                simulation_steps.append(final_step)
+                break
+            
+            # El dron avanza más rápido (speed_multiplier celdas por paso)
+            next_index = min(current_index + speed_multiplier, len(drone_path) - 1)
+            
+            # Revelar infestación progresivamente conforme el dron se mueve
+            # Solo revelar las celdas cercanas a la posición actual del dron, no toda la fila
+            for idx in range(current_index, next_index + 1):
+                if idx < len(drone_path):
+                    pos = drone_path[idx]
+                    x, z = pos
+                    if self._in_bounds(x, z):
+                        # Revelar infestación de 3 filas: la fila actual y las dos adyacentes (arriba y abajo)
+                        # Pero solo en un radio alrededor de la posición actual del dron
+                        # Radio de visión: 2 celdas a cada lado (total 5 celdas de ancho)
+                        vision_radius = 2
+                        for dz in [-1, 0, 1]:  # Fila arriba, actual, fila abajo
+                            nz = z + dz
+                            if self._in_bounds(0, nz):  # Verificar que la fila existe
+                                # Analizar solo las celdas en el radio de visión alrededor del dron
+                                for dx in range(-vision_radius, vision_radius + 1):
+                                    nx = x + dx
+                                    if self._in_bounds(nx, nz):
+                                        cell_key = f"{nx},{nz}"
+                                        if cell_key not in revealed_infestation:
+                                            revealed_infestation[cell_key] = infestation_grid[nz][nx]
+            
+            current_index = next_index
+            
+            step_state = {
+                'position': drone_path[current_index],
+                'path_index': current_index,
+                'arrived': current_index >= len(drone_path) - 1,
+                'color': drone_color,
+                'revealed_infestation': revealed_infestation.copy()
+            }
+            simulation_steps.append(step_state)
+        
+        return simulation_steps
     
     def simulate_tractors(
         self,
@@ -448,6 +932,8 @@ class Pathfinder:
     ) -> List[List[Dict]]:
         """
         Simula el movimiento de múltiples tractores con detección de colisiones.
+        Los tractores que llegaron a su destino bloquean físicamente y los demás
+        deben recalcular su ruta si su camino está bloqueado.
         
         Args:
             tractor_paths: Lista de caminos, uno por cada tractor
@@ -457,15 +943,19 @@ class Pathfinder:
             Lista de listas, donde cada lista interna contiene los estados de un tractor
             en cada paso. Cada estado es un dict con:
             - 'position': (x, z) posición actual
-            - 'path_index': índice en el camino
+            - 'path_index': índice en el camino (o -1 si se recalculó)
             - 'waiting': bool si está esperando por colisión
+            - 'path_recalculated': bool si se recalculó el camino
         """
         num_tractors = len(tractor_paths)
         if num_tractors == 0:
             return []
         
-        # Inicializar posiciones: todos empiezan en el barn
+        # Inicializar posiciones: cada tractor empieza en su celda asignada del granero
+        # (el primer elemento de su camino es su posición inicial)
         tractor_positions = [0] * num_tractors  # Índice en el camino de cada tractor
+        # Mantener los caminos originales y los recalculados
+        current_paths = [path[:] for path in tractor_paths]  # Copia de los caminos
         simulation_steps = []
         
         # Colores para cada tractor (para visualización)
@@ -474,91 +964,315 @@ class Pathfinder:
             '#00ffff', '#ff8800', '#8800ff', '#88ff00', '#ff0088'
         ]
         
+        # Agregar paso inicial: todos los tractores en sus posiciones iniciales del granero
+        initial_step = []
+        for tractor_id in range(num_tractors):
+            path = current_paths[tractor_id]
+            if path and len(path) > 0:
+                initial_pos = path[0]  # Primera celda del camino = celda del granero asignada
+                initial_step.append({
+                    'position': initial_pos,
+                    'path_index': 0,
+                    'waiting': False,
+                    'arrived': False,
+                    'path_recalculated': False,
+                    'color': tractor_colors[tractor_id % len(tractor_colors)]
+                })
+        simulation_steps.append(initial_step)
+        
         for step in range(max_steps):
             step_state = []
             # Diccionario: posición -> lista de tractor_ids en esa posición
-            # Permite múltiples tractores en la misma posición (como al inicio en el barn)
-            position_to_tractors = {}
+            # Incluye TODOS los tractores (los que llegaron también bloquean)
+            all_tractor_positions = {}
             
-            # Primero, registrar todas las posiciones actuales
+            # Registrar TODAS las posiciones actuales (incluyendo tractores que llegaron)
             for tractor_id in range(num_tractors):
-                path = tractor_paths[tractor_id]
+                path = current_paths[tractor_id]
                 current_index = tractor_positions[tractor_id]
+                
                 if current_index < len(path):
                     current_pos = path[current_index]
-                    if current_pos not in position_to_tractors:
-                        position_to_tractors[current_pos] = []
-                    position_to_tractors[current_pos].append(tractor_id)
+                    if current_pos not in all_tractor_positions:
+                        all_tractor_positions[current_pos] = []
+                    all_tractor_positions[current_pos].append(tractor_id)
             
-            # Procesar tractores en orden (permite salida ordenada del barn)
+            # Primera pasada: calcular todos los movimientos deseados
+            desired_moves = {}  # posición -> lista de (tractor_id, current_pos, next_pos)
+            tractor_states = {}  # tractor_id -> estado temporal
+            
             for tractor_id in range(num_tractors):
-                path = tractor_paths[tractor_id]
+                path = current_paths[tractor_id]
                 current_index = tractor_positions[tractor_id]
                 
                 if current_index >= len(path) - 1:
-                    # Tractor ya llegó a su destino
-                    step_state.append({
+                    # Tractor ya llegó a su destino - SÍ bloquea físicamente
+                    tractor_states[tractor_id] = {
                         'position': path[-1],
                         'path_index': len(path) - 1,
                         'waiting': False,
                         'arrived': True,
-                        'color': tractor_colors[tractor_id % len(tractor_colors)]
-                    })
+                        'path_recalculated': False,
+                        'color': tractor_colors[tractor_id % len(tractor_colors)],
+                        'can_move': False
+                    }
                     continue
                 
                 next_index = current_index + 1
                 next_pos = path[next_index]
                 current_pos = path[current_index]
                 
-                # Verificar colisión: si la posición objetivo ya está ocupada
-                # (y no es solo este tractor moviéndose)
-                next_pos_occupied = next_pos in position_to_tractors and len(position_to_tractors[next_pos]) > 0
+                # Verificar si la siguiente posición está bloqueada
+                # (por cualquier tractor, incluyendo los que ya llegaron)
+                next_pos_blocked = (
+                    next_pos in all_tractor_positions and 
+                    len(all_tractor_positions[next_pos]) > 0
+                )
                 
-                # Si la posición objetivo está ocupada, verificar si es solo porque
-                # otro tractor ya se movió ahí en este mismo paso
-                if next_pos_occupied:
-                    # Hay colisión, esperar (mantener posición actual)
-                    step_state.append({
+                # Si está bloqueado, verificar si es un bloqueo permanente (tractor que ya llegó)
+                # o temporal (otro tractor en movimiento)
+                is_permanent_block = False
+                if next_pos_blocked:
+                    blocking_tractors = all_tractor_positions[next_pos]
+                    for blocking_id in blocking_tractors:
+                        if blocking_id != tractor_id:
+                            blocking_path = current_paths[blocking_id]
+                            blocking_index = tractor_positions[blocking_id]
+                            # Si el tractor que bloquea ya llegó a su destino, es bloqueo permanente
+                            if blocking_index >= len(blocking_path) - 1:
+                                is_permanent_block = True
+                                break
+                
+                if is_permanent_block:
+                    # Bloqueo permanente: recalcular camino desde posición actual
+                    destination = path[-1]  # Destino original
+                    
+                    # Crear un grid temporal con las posiciones bloqueadas como intransitables
+                    blocked_positions = set()
+                    for other_id in range(num_tractors):
+                        if other_id != tractor_id:
+                            other_path = current_paths[other_id]
+                            other_index = tractor_positions[other_id]
+                            if other_index >= len(other_path) - 1:
+                                # Tractor que ya llegó bloquea su posición
+                                blocked_positions.add(other_path[-1])
+                    
+                    # Recalcular camino evitando posiciones bloqueadas
+                    new_path = self._dijkstra_with_blocked(
+                        current_pos, 
+                        destination, 
+                        blocked_positions,
+                        prefer_roads=True
+                    )
+                    
+                    if new_path and len(new_path) > 1:
+                        # Actualizar el camino del tractor
+                        # El nuevo camino debe empezar desde la posición actual
+                        # (el primer elemento del nuevo camino debería ser current_pos)
+                        if new_path[0] != current_pos:
+                            # Si el nuevo camino no empieza en la posición actual, ajustarlo
+                            new_path = [current_pos] + [p for p in new_path if p != current_pos]
+                        
+                        current_paths[tractor_id] = new_path
+                        tractor_positions[tractor_id] = 0  # Empezar desde el inicio del nuevo camino
+                        
+                        tractor_states[tractor_id] = {
+                            'position': current_pos,
+                            'path_index': -1,  # Indica que se recalculó
+                            'waiting': False,
+                            'arrived': False,
+                            'path_recalculated': True,
+                            'color': tractor_colors[tractor_id % len(tractor_colors)],
+                            'can_move': False
+                        }
+                    else:
+                        # No se pudo encontrar camino alternativo, esperar
+                        tractor_states[tractor_id] = {
+                            'position': current_pos,
+                            'path_index': current_index,
+                            'waiting': True,
+                            'arrived': False,
+                            'path_recalculated': False,
+                            'color': tractor_colors[tractor_id % len(tractor_colors)],
+                            'can_move': False
+                        }
+                elif next_pos_blocked:
+                    # Bloqueo temporal: esperar (otro tractor en movimiento)
+                    tractor_states[tractor_id] = {
                         'position': current_pos,
                         'path_index': current_index,
                         'waiting': True,
                         'arrived': False,
-                        'color': tractor_colors[tractor_id % len(tractor_colors)]
-                    })
+                        'path_recalculated': False,
+                        'color': tractor_colors[tractor_id % len(tractor_colors)],
+                        'can_move': False
+                    }
                 else:
-                    # Puede avanzar - actualizar posiciones
-                    # Remover de posición actual
-                    if current_pos in position_to_tractors:
-                        position_to_tractors[current_pos].remove(tractor_id)
-                        if len(position_to_tractors[current_pos]) == 0:
-                            del position_to_tractors[current_pos]
-                    
-                    # Agregar a nueva posición
-                    if next_pos not in position_to_tractors:
-                        position_to_tractors[next_pos] = []
-                    position_to_tractors[next_pos].append(tractor_id)
-                    
+                    # Puede avanzar - registrar movimiento deseado
+                    if next_pos not in desired_moves:
+                        desired_moves[next_pos] = []
+                    desired_moves[next_pos].append((tractor_id, current_pos, next_pos))
+                    tractor_states[tractor_id] = {
+                        'position': current_pos,
+                        'path_index': current_index,
+                        'waiting': False,
+                        'arrived': False,
+                        'path_recalculated': False,
+                        'color': tractor_colors[tractor_id % len(tractor_colors)],
+                        'can_move': True,
+                        'next_pos': next_pos,
+                        'next_index': next_index
+                    }
+            
+            # Segunda pasada: resolver conflictos - solo un tractor por celda
+            occupied_positions = set()  # Posiciones ya ocupadas en este paso
+            
+            # Primero, procesar tractores que ya llegaron (bloquean sus posiciones)
+            for tractor_id in range(num_tractors):
+                if tractor_id in tractor_states and not tractor_states[tractor_id].get('can_move', True):
+                    pos = tractor_states[tractor_id]['position']
+                    occupied_positions.add(pos)
+            
+            # Luego, procesar movimientos deseados, dando prioridad al primer tractor que quiere moverse
+            for next_pos, movers in desired_moves.items():
+                if next_pos in occupied_positions:
+                    # La celda ya está ocupada, todos los que quieren moverse ahí deben esperar
+                    for tractor_id, current_pos, _ in movers:
+                        tractor_states[tractor_id] = {
+                            'position': current_pos,
+                            'path_index': tractor_states[tractor_id]['path_index'],
+                            'waiting': True,
+                            'arrived': False,
+                            'path_recalculated': False,
+                            'color': tractor_colors[tractor_id % len(tractor_colors)],
+                            'can_move': False
+                        }
+                else:
+                    # Solo el primer tractor puede moverse a esta celda
+                    tractor_id, current_pos, _ = movers[0]
+                    next_index = tractor_states[tractor_id]['next_index']
                     tractor_positions[tractor_id] = next_index
-                    step_state.append({
+                    tractor_states[tractor_id] = {
                         'position': next_pos,
                         'path_index': next_index,
                         'waiting': False,
                         'arrived': False,
-                        'color': tractor_colors[tractor_id % len(tractor_colors)]
-                    })
+                        'path_recalculated': False,
+                        'color': tractor_colors[tractor_id % len(tractor_colors)],
+                        'can_move': False
+                    }
+                    occupied_positions.add(next_pos)
+                    
+                    # Los demás deben esperar
+                    for other_tractor_id, other_current_pos, _ in movers[1:]:
+                        tractor_states[other_tractor_id] = {
+                            'position': other_current_pos,
+                            'path_index': tractor_states[other_tractor_id]['path_index'],
+                            'waiting': True,
+                            'arrived': False,
+                            'path_recalculated': False,
+                            'color': tractor_colors[other_tractor_id % len(tractor_colors)],
+                            'can_move': False
+                        }
+            
+            # Agregar todos los estados al paso
+            for tractor_id in range(num_tractors):
+                if tractor_id in tractor_states:
+                    state = tractor_states[tractor_id].copy()
+                    # Remover campos internos antes de agregar al paso
+                    state.pop('can_move', None)
+                    state.pop('next_pos', None)
+                    state.pop('next_index', None)
+                    step_state.append(state)
             
             simulation_steps.append(step_state)
             
             # Verificar si todos llegaron
             all_arrived = all(
-                state.get('arrived', False) or 
-                tractor_positions[i] >= len(tractor_paths[i]) - 1
-                for i, state in enumerate(step_state)
+                tractor_positions[i] >= len(current_paths[i]) - 1
+                for i in range(num_tractors)
             )
             if all_arrived:
                 break
         
         return simulation_steps
+    
+    def _dijkstra_with_blocked(
+        self,
+        start: Tuple[int, int],
+        end: Tuple[int, int],
+        blocked_positions: Set[Tuple[int, int]],
+        prefer_roads: bool = True
+    ) -> Optional[List[Tuple[int, int]]]:
+        """
+        Implementa Dijkstra evitando posiciones bloqueadas.
+        
+        Args:
+            start: Posición inicial
+            end: Posición destino
+            blocked_positions: Conjunto de posiciones bloqueadas (intransitables temporalmente)
+            prefer_roads: Si True, prioriza caminos
+        
+        Returns:
+            Lista de tuplas (x, z) del camino, o None si no hay camino
+        """
+        if not self._is_passable(*start) or not self._is_passable(*end):
+            return None
+        
+        if start in blocked_positions or end in blocked_positions:
+            return None
+        
+        # Cola de prioridad: (costo_acumulado, x, z)
+        pq = [(0, start[0], start[1])]
+        
+        # Diccionario para guardar el costo mínimo a cada celda
+        costs = {start: 0}
+        
+        # Diccionario para reconstruir el camino
+        came_from = {start: None}
+        
+        visited = set()
+        
+        while pq:
+            current_cost, x, z = heapq.heappop(pq)
+            current = (x, z)
+            
+            if current in visited:
+                continue
+            
+            visited.add(current)
+            
+            # Si llegamos al destino
+            if current == end:
+                # Reconstruir el camino
+                path = []
+                node = end
+                while node is not None:
+                    path.append(node)
+                    node = came_from[node]
+                path.reverse()
+                return path
+            
+            # Explorar vecinos
+            for neighbor in self._get_neighbors(x, z):
+                if neighbor in visited or neighbor in blocked_positions:
+                    continue
+                
+                if not self._is_passable(*neighbor):
+                    continue
+                
+                # Calcular nuevo costo
+                move_cost = self._get_cost(*neighbor, prefer_roads=prefer_roads)
+                new_cost = current_cost + move_cost
+                
+                # Si encontramos un camino más corto o es la primera vez que visitamos
+                if neighbor not in costs or new_cost < costs[neighbor]:
+                    costs[neighbor] = new_cost
+                    came_from[neighbor] = current
+                    heapq.heappush(pq, (new_cost, neighbor[0], neighbor[1]))
+        
+        # No se encontró camino
+        return None
 
 
 class DynamicPathfinder(Pathfinder):

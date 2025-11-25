@@ -68,12 +68,133 @@ class WorldGenerator:
         return neighbors
 
     def _place_barn(self) -> Tuple[int, int]:
-        """Coloca el granero en una posición aleatoria con margen"""
-        margin = 2
-        bx = random.randint(margin, self.width - margin - 1)
-        bz = random.randint(margin, self.height - margin - 1)
-        self.grid[bz][bx] = TileType.BARN
-        return bx, bz
+        """
+        Coloca el granero de 5 casillas en línea (horizontal o vertical) y lo rodea de camino.
+        Retorna la posición central (tercera casilla) del granero.
+        """
+        # Margen necesario: 2 casillas para el granero + 1 para el camino alrededor
+        margin = 3
+        
+        # Decidir si será horizontal o vertical
+        is_horizontal = random.choice([True, False])
+        
+        # Intentar colocar el granero en una posición válida
+        max_attempts = 50
+        for _ in range(max_attempts):
+            if is_horizontal:
+                # Granero horizontal: 5 casillas en fila
+                # Necesitamos espacio: 5 casillas + 2 de margen = 7 mínimo
+                if self.width < 7:
+                    is_horizontal = False
+                    continue
+                
+                start_x = random.randint(margin, self.width - margin - 5)
+                center_z = random.randint(margin, self.height - margin - 1)
+                
+                # Posiciones del granero en línea horizontal
+                barn_positions = [
+                    (start_x, center_z),
+                    (start_x + 1, center_z),
+                    (start_x + 2, center_z),  # Centro
+                    (start_x + 3, center_z),
+                    (start_x + 4, center_z),
+                ]
+                center_x = start_x + 2
+            else:
+                # Granero vertical: 5 casillas en columna
+                # Necesitamos espacio: 5 casillas + 2 de margen = 7 mínimo
+                if self.height < 7:
+                    is_horizontal = True
+                    continue
+                
+                center_x = random.randint(margin, self.width - margin - 1)
+                start_z = random.randint(margin, self.height - margin - 5)
+                
+                # Posiciones del granero en línea vertical
+                barn_positions = [
+                    (center_x, start_z),
+                    (center_x, start_z + 1),
+                    (center_x, start_z + 2),  # Centro
+                    (center_x, start_z + 3),
+                    (center_x, start_z + 4),
+                ]
+                center_z = start_z + 2
+            
+            # Verificar que todas las posiciones del granero estén libres
+            if all(self._is_free(x, z) for x, z in barn_positions):
+                # Colocar las 5 casillas del granero
+                for x, z in barn_positions:
+                    self.grid[z][x] = TileType.BARN
+                
+                # Rodearlo completamente de camino (8 direcciones alrededor de cada casilla del granero)
+                road_positions = set()
+                for bx, bz in barn_positions:
+                    # Agregar los 8 vecinos de cada casilla del granero
+                    for dx in [-1, 0, 1]:
+                        for dz in [-1, 0, 1]:
+                            if dx == 0 and dz == 0:
+                                continue  # Saltar la casilla del granero misma
+                            rx, rz = bx + dx, bz + dz
+                            # Solo agregar si está libre y dentro de los límites
+                            if self._is_free(rx, rz) and self._in_bounds(rx, rz):
+                                road_positions.add((rx, rz))
+                
+                # Colocar los caminos alrededor del granero
+                for rx, rz in road_positions:
+                    self.grid[rz][rx] = TileType.ROAD
+                
+                return center_x, center_z
+        
+        # Si no se pudo colocar después de varios intentos, usar posición por defecto
+        center_x = self.width // 2
+        center_z = self.height // 2
+        
+        # Intentar horizontal primero
+        if self.width >= 7:
+            start_x = max(2, center_x - 2)
+            start_x = min(start_x, self.width - 5)
+            barn_positions = [
+                (start_x, center_z),
+                (start_x + 1, center_z),
+                (start_x + 2, center_z),
+                (start_x + 3, center_z),
+                (start_x + 4, center_z),
+            ]
+            center_x = start_x + 2
+        else:
+            # Usar vertical si no hay espacio horizontal
+            start_z = max(2, center_z - 2)
+            start_z = min(start_z, self.height - 5)
+            barn_positions = [
+                (center_x, start_z),
+                (center_x, start_z + 1),
+                (center_x, start_z + 2),
+                (center_x, start_z + 3),
+                (center_x, start_z + 4),
+            ]
+            center_z = start_z + 2
+        
+        # Colocar el granero
+        for x, z in barn_positions:
+            if self._in_bounds(x, z):
+                self.grid[z][x] = TileType.BARN
+        
+        # Rodearlo de camino
+        road_positions = set()
+        for bx, bz in barn_positions:
+            if self._in_bounds(bx, bz):
+                for dx in [-1, 0, 1]:
+                    for dz in [-1, 0, 1]:
+                        if dx == 0 and dz == 0:
+                            continue
+                        rx, rz = bx + dx, bz + dz
+                        if self._in_bounds(rx, rz) and self.grid[rz][rx] != TileType.BARN:
+                            road_positions.add((rx, rz))
+        
+        for rx, rz in road_positions:
+            self.grid[rz][rx] = TileType.ROAD
+        
+        return center_x, center_z
 
     def _generate_roads(
         self, 
@@ -82,11 +203,47 @@ class WorldGenerator:
         branch_chance: float, 
         max_length: int
     ) -> Set[Tuple[int, int]]:
-        """Genera caminos con sistema de ramificación desde el granero"""
+        """
+        Genera caminos con sistema de ramificación desde el granero.
+        Incluye los caminos que ya rodean al granero.
+        """
         road_cells: Set[Tuple[int, int]] = set()
-        stack = [(start_x, start_z)]
+        
+        # Primero, agregar los caminos que ya rodean al granero
+        # (estos fueron colocados en _place_barn)
+        barn_positions = [
+            (start_x, start_z),
+            (start_x, start_z - 1),
+            (start_x, start_z + 1),
+            (start_x - 1, start_z),
+            (start_x + 1, start_z),
+        ]
+        
+        for bx, bz in barn_positions:
+            if self._in_bounds(bx, bz):
+                # Agregar los 8 vecinos de cada casilla del granero que sean caminos
+                for dx in [-1, 0, 1]:
+                    for dz in [-1, 0, 1]:
+                        if dx == 0 and dz == 0:
+                            continue
+                        rx, rz = bx + dx, bz + dz
+                        if self._in_bounds(rx, rz) and self.grid[rz][rx] == TileType.ROAD:
+                            road_cells.add((rx, rz))
+        
+        # Ahora generar caminos ramificados desde las casillas de camino alrededor del granero
+        # Usar las 4 direcciones principales desde el centro del granero
+        stack = []
         directions = [(1, 0), (-1, 0), (0, 1), (0, -1)]
         
+        # Agregar puntos de inicio desde los caminos alrededor del granero
+        for bx, bz in barn_positions:
+            if self._in_bounds(bx, bz):
+                for dx, dz in directions:
+                    rx, rz = bx + dx, bz + dz
+                    if self._in_bounds(rx, rz) and self.grid[rz][rx] == TileType.ROAD:
+                        stack.append((rx, rz))
+        
+        # Generar caminos ramificados
         while stack:
             x, z = stack.pop()
             
@@ -211,6 +368,8 @@ class WorldGenerator:
         field_count = self._count_connected_fields()
         field_cells = sum(1 for z in range(self.height) for x in range(self.width) 
                          if self.grid[z][x] == TileType.FIELD)
+        barn_cells = sum(1 for z in range(self.height) for x in range(self.width) 
+                        if self.grid[z][x] == TileType.BARN)
         
         # Estadísticas por tipo de cultivo
         crop_stats = {
@@ -239,7 +398,9 @@ class WorldGenerator:
             'road_count': road_count,
             'field_count': field_count,
             'field_cells': field_cells,
-            'impassable_cells': self.width * self.height - road_count - field_cells - 1,  # -1 por el granero
+            'barn_cells': barn_cells,
+            'total_barns': 1,  # Siempre hay un granero
+            'impassable_cells': self.width * self.height - road_count - field_cells - barn_cells,
             'crop_distribution': crop_stats,
             'average_infestation': round(avg_infestation, 2)
         }

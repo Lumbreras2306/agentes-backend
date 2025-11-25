@@ -1,0 +1,22 @@
+# Scripts shell deben usar LF
+*.sh text eol=lf
+
+# Archivos Python deben usar LF
+*.py text eol=lf
+
+# Archivos de configuración comunes
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+
+# Archivos de Docker
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+.dockerignore text eol=lf
+
+# Archivos de configuración de Git
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
