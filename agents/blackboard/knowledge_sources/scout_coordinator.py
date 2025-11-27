@@ -1,0 +1,172 @@
+"""
+ScoutCoordinatorKS - Coordinates scout exploration
+
+This Knowledge Source directs scout agents to unexplored areas
+of the map to maximize coverage.
+"""
+
+from .base import KnowledgeSource
+from ..knowledge_base import EventType, AgentState
+from typing import Tuple, Optional, Set
+
+
+class ScoutCoordinatorKS(KnowledgeSource):
+    """
+    ScoutCoordinatorKS coordinates scout exploration patterns.
+
+    Triggers:
+    - AGENT_IDLE: When scout becomes idle, give it a new exploration target
+
+    Logic:
+    - Tracks analyzed positions across all scouts
+    - Identifies unexplored areas
+    - Directs scouts to maximize coverage
+    - Uses systematic scanning pattern
+    """
+
+    def __init__(self, knowledge_base):
+        super().__init__(knowledge_base)
+        self.priority = 5  # Medium priority
+        self.triggers = {EventType.AGENT_IDLE}
+        self.always_run = True  # Check every cycle
+
+        # Track globally analyzed positions
+        self.analyzed_positions: Set[Tuple[int, int]] = set()
+
+    def check_preconditions(self) -> bool:
+        """Check if there are idle scouts"""
+        scouts = self.kb.get_agents_by_type('scout')
+        idle_scouts = [s for s in scouts if s.status in ['idle', 'scouting']]
+
+        return len(idle_scouts) > 0
+
+    def execute(self):
+        """Direct scouts to unexplored areas"""
+        scouts = self.kb.get_agents_by_type('scout')
+
+        # Update global analyzed positions
+        for scout in scouts:
+            self.analyzed_positions.update(scout.analyzed_positions)
+
+        # Direct each idle scout
+        for scout in scouts:
+            if scout.status in ['idle', 'scouting']:
+                target = self._find_exploration_target(scout)
+
+                if target:
+                    # Send exploration command
+                    self.kb.set_shared(f'command_{scout.agent_id}', {
+                        'action': 'explore_area',
+                        'target_position': target,
+                    })
+
+                    self.kb.update_agent(
+                        scout.agent_id,
+                        status='scouting'
+                    )
+
+    def _find_exploration_target(self, scout: AgentState) -> Optional[Tuple[int, int]]:
+        """
+        Find the next exploration target for a scout.
+
+        Strategy:
+        - Use systematic strip scanning
+        - Move in rows with spacing of 3 (to scan 3 rows at once)
+        - Start from top-left, move right, then down
+
+        Args:
+            scout: The scout agent
+
+        Returns:
+            Target position or None if all explored
+        """
+        from world.world_generator import TileType
+
+        width = self.kb.world_state.width
+        height = self.kb.world_state.height
+        grid = self.kb.world_state.grid
+
+        # Find unanalyzed fields in a systematic pattern
+        # Scan in strips of 3 rows (scout scans current row ± 1)
+        for z in range(1, height - 1, 3):  # Skip edges, step by 3
+            for x in range(width):
+                # Check if this strip has unanalyzed fields
+                strip_analyzed = True
+                for dz in [-1, 0, 1]:
+                    check_z = z + dz
+                    if 0 <= check_z < height:
+                        if grid[check_z][x] == TileType.FIELD:
+                            if (x, check_z) not in self.analyzed_positions:
+                                strip_analyzed = False
+                                break
+
+                if not strip_analyzed:
+                    # This strip has unanalyzed fields
+                    # Find a safe position in the strip to navigate to
+                    for test_x in range(x, width):
+                        if grid[z][test_x] != TileType.IMPASSABLE:
+                            return (test_x, z)
+
+        # If systematic scan complete, look for any unanalyzed field
+        for z in range(height):
+            for x in range(width):
+                if grid[z][x] == TileType.FIELD:
+                    if (x, z) not in self.analyzed_positions:
+                        # Found unanalyzed field
+                        # Return a position near it that's navigable
+                        return self._find_nearest_navigable(x, z)
+
+        # All fields analyzed
+        return None
+
+    def _find_nearest_navigable(self, x: int, z: int) -> Tuple[int, int]:
+        """Find nearest navigable position to (x, z)"""
+        from world.world_generator import TileType
+
+        grid = self.kb.world_state.grid
+        width = self.kb.world_state.width
+        height = self.kb.world_state.height
+
+        # Check if position itself is navigable
+        if grid[z][x] != TileType.IMPASSABLE:
+            return (x, z)
+
+        # Search in expanding radius
+        for radius in range(1, min(width, height)):
+            for dx in range(-radius, radius + 1):
+                for dz in range(-radius, radius + 1):
+                    if abs(dx) + abs(dz) != radius:  # Only check border
+                        continue
+
+                    nx, nz = x + dx, z + dz
+
+                    if 0 <= nx < width and 0 <= nz < height:
+                        if grid[nz][nx] != TileType.IMPASSABLE:
+                            return (nx, nz)
+
+        # Fallback to center
+        return (width // 2, height // 2)
+
+    def get_coverage_percentage(self) -> float:
+        """Get percentage of fields analyzed"""
+        from world.world_generator import TileType
+
+        grid = self.kb.world_state.grid
+        width = self.kb.world_state.width
+        height = self.kb.world_state.height
+
+        total_fields = 0
+        for z in range(height):
+            for x in range(width):
+                if grid[z][x] == TileType.FIELD:
+                    total_fields += 1
+
+        if total_fields == 0:
+            return 100.0
+
+        analyzed_fields = len([
+            pos for pos in self.analyzed_positions
+            if grid[pos[1]][pos[0]] == TileType.FIELD
+        ])
+
+        return (analyzed_fields / total_fields) * 100.0
