@@ -59,6 +59,10 @@ class FumigationModel(ap.Model):
 
     def step(self):
         """Execute one simulation step"""
+        # Ensure total_steps is initialized (in case setup() wasn't called)
+        if not hasattr(self, 'total_steps'):
+            self.total_steps = 0
+        
         self.total_steps += 1
 
         # 1. Execute Blackboard control cycle

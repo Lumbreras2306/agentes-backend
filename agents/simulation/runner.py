@@ -62,6 +62,11 @@ def run_simulation(
 
     # Create and run model
     model = FumigationModel(parameters)
+    
+    # Ensure setup() was called (AgentPy should call it automatically, but verify)
+    if not hasattr(model, 'total_steps'):
+        # If setup() wasn't called, call it manually
+        model.setup()
 
     # Channel layer for WebSocket updates
     channel_layer = get_channel_layer() if send_updates else None

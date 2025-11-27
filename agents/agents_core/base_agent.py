@@ -49,7 +49,8 @@ class BaseAgent(ap.Agent):
 
     def _get_default_position(self) -> Tuple[int, int]:
         """Get default starting position (barn center)"""
-        barn_positions = self.blackboard.knowledge_base.world_state.barn_positions
+        # Use model.blackboard directly since self.blackboard may not be set yet
+        barn_positions = self.model.blackboard.knowledge_base.world_state.barn_positions
         if barn_positions:
             return barn_positions[0]
         # Fallback to center
