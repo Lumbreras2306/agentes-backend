@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { worldsApi, agentsApi, blackboardApi } from '../services/api'
 import { World, Agent, BlackboardTask } from '../types'
+import { useModal } from '../hooks/useModal'
+import Modal from '../components/Modal'
 import WorldVisualization from '../components/WorldVisualization'
 import DijkstraAnimation from '../components/DijkstraAnimation'
 import './WorldDetail.css'
@@ -52,6 +54,7 @@ export default function WorldDetail() {
   const [animationSpeed, setAnimationSpeed] = useState(300)
   const [animationData, setAnimationData] = useState<AnimationData | null>(null)
   const [loadingAnimation, setLoadingAnimation] = useState(false)
+  const { modal, showError, showSuccess, closeModal } = useModal()
 
   useEffect(() => {
     if (id) {
@@ -99,7 +102,7 @@ export default function WorldDetail() {
       loadWorld()
     } catch (error) {
       console.error('Error regenerating world:', error)
-      alert('Error al regenerar el mundo')
+      showError('Error al regenerar el mundo')
     }
   }
 
@@ -107,10 +110,10 @@ export default function WorldDetail() {
     try {
       await blackboardApi.initializeTasks(id!, 10)
       loadTasks()
-      alert('Tareas inicializadas correctamente')
+      showSuccess('Tareas inicializadas correctamente')
     } catch (error) {
       console.error('Error initializing tasks:', error)
-      alert('Error al inicializar tareas')
+      showError('Error al inicializar tareas')
     }
   }
 
@@ -122,7 +125,7 @@ export default function WorldDetail() {
       setAnimationData(response.data)
     } catch (error) {
       console.error('Error loading animation data:', error)
-      alert('Error al cargar datos de animación')
+      showError('Error al cargar datos de animación')
     } finally {
       setLoadingAnimation(false)
     }
@@ -341,6 +344,13 @@ export default function WorldDetail() {
           </div>
         </div>
       </div>
+      <Modal
+        isOpen={modal.isOpen}
+        onClose={closeModal}
+        title={modal.title}
+        message={modal.message}
+        type={modal.type}
+      />
     </div>
   )
 }

@@ -44,6 +44,7 @@ export const simulationsApi = {
   create: (data: any) => api.post('/simulations/', data),
   update: (id: string, data: any) => api.patch(`/simulations/${id}/`, data),
   delete: (id: string) => api.delete(`/simulations/${id}/`),
+  start: (id: string) => api.post(`/simulations/${id}/start/`),
   getAgents: (id: string) => api.get(`/simulations/${id}/agents/`),
   getTasks: (id: string) => api.get(`/simulations/${id}/tasks/`),
 }

@@ -38,9 +38,9 @@ class SimulationSerializer(serializers.ModelSerializer):
 class SimulationCreateSerializer(serializers.Serializer):
     """Serializer para crear una nueva simulación"""
     world_id = serializers.UUIDField(required=True)
-    num_fumigators = serializers.IntegerField(default=3, min_value=1, max_value=10)
-    num_scouts = serializers.IntegerField(default=2, min_value=1, max_value=10)
-    max_steps = serializers.IntegerField(default=1000, min_value=1, max_value=10000)
+    num_fumigators = serializers.IntegerField(default=5, min_value=1, max_value=10)
+    num_scouts = serializers.IntegerField(default=1, min_value=1, max_value=10)
+    max_steps = serializers.IntegerField(default=300, min_value=1, max_value=10000)
     min_infestation = serializers.IntegerField(default=10, min_value=0, max_value=100)
 
 

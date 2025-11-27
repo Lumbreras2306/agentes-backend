@@ -3,12 +3,15 @@ import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { worldsApi } from '../services/api'
 import { World } from '../types'
+import { useModal } from '../hooks/useModal'
+import Modal from '../components/Modal'
 import './Worlds.css'
 
 export default function Worlds() {
   const [worlds, setWorlds] = useState<World[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateForm, setShowCreateForm] = useState(false)
+  const { modal, showError, showSuccess, closeModal } = useModal()
   const [formData, setFormData] = useState({
     name: '',
     width: 30,
@@ -39,20 +42,22 @@ export default function Worlds() {
       setShowCreateForm(false)
       setFormData({ name: '', width: 30, height: 30, seed: Math.floor(Math.random() * 10000) })
       loadWorlds()
+      showSuccess('Mundo creado correctamente')
     } catch (error) {
       console.error('Error creating world:', error)
-      alert('Error al crear el mundo')
+      showError('Error al crear el mundo')
     }
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('¿Estás seguro de eliminar este mundo?')) return
+    if (!window.confirm('¿Estás seguro de eliminar este mundo?')) return
     try {
       await worldsApi.delete(id)
       loadWorlds()
+      showSuccess('Mundo eliminado correctamente')
     } catch (error) {
       console.error('Error deleting world:', error)
-      alert('Error al eliminar el mundo')
+      showError('Error al eliminar el mundo')
     }
   }
 
@@ -172,6 +177,13 @@ export default function Worlds() {
           ))}
         </div>
       )}
+      <Modal
+        isOpen={modal.isOpen}
+        onClose={closeModal}
+        title={modal.title}
+        message={modal.message}
+        type={modal.type}
+      />
     </div>
   )
 }

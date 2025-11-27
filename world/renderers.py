@@ -1,5 +1,8 @@
 from rest_framework.renderers import JSONRenderer, BaseRenderer
 import json
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
 
 
 class PNGRenderer(BaseRenderer):
@@ -43,8 +46,25 @@ class CompactJSONRenderer(JSONRenderer):
         json_str = self._format_json(data)
         return json_str.encode('utf-8')
     
+    def _convert_to_serializable(self, obj):
+        """Convierte objetos no serializables a tipos serializables"""
+        if isinstance(obj, uuid.UUID):
+            return str(obj)
+        elif isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        elif isinstance(obj, Decimal):
+            return float(obj)
+        elif isinstance(obj, dict):
+            return {k: self._convert_to_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [self._convert_to_serializable(item) for item in obj]
+        return obj
+    
     def _format_json(self, obj, indent=0):
         """Formatea JSON con listas en una sola línea"""
+        # Convertir objetos no serializables primero
+        obj = self._convert_to_serializable(obj)
+        
         indent_str = "  " * indent
         
         if isinstance(obj, dict):
@@ -64,11 +84,11 @@ class CompactJSONRenderer(JSONRenderer):
             
             # Si la lista contiene solo números o strings simples, mantenerla en una línea
             if all(isinstance(item, (int, float, str, bool, type(None))) for item in obj):
-                return json.dumps(obj, ensure_ascii=False)
+                return json.dumps(obj, ensure_ascii=False, default=str)
             
             # Si contiene listas (como grid), formatear cada sublista en su línea
             if all(isinstance(item, list) for item in obj):
-                items = [json.dumps(item, ensure_ascii=False) for item in obj]
+                items = [json.dumps(item, ensure_ascii=False, default=str) for item in obj]
                 return "[\n" + indent_str + "  " + (",\n" + indent_str + "  ").join(items) + f"\n{indent_str}]"
             
             # Para otros casos, formato normal
@@ -80,4 +100,5 @@ class CompactJSONRenderer(JSONRenderer):
             return "[\n" + ",\n".join(items) + f"\n{indent_str}]"
         
         else:
-            return json.dumps(obj, ensure_ascii=False)
+            # Usar el encoder JSON estándar que ahora puede manejar los tipos convertidos
+            return json.dumps(obj, ensure_ascii=False, default=str)

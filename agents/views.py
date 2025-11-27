@@ -66,30 +66,26 @@ class SimulationViewSet(viewsets.ModelViewSet):
         # Obtener el mundo
         world = get_object_or_404(World, id=world_id)
         
-        # Ejecutar simulación
-        try:
-            results = run_simulation(
-                world_instance=world,
-                num_fumigators=num_fumigators,
-                num_scouts=num_scouts,
-                max_steps=max_steps,
-                min_infestation=min_infestation
-            )
-            
-            # Obtener la simulación creada
-            simulation = Simulation.objects.get(id=results['simulation_id'])
-            output_serializer = SimulationSerializer(simulation)
-            
-            return Response({
-                'simulation': output_serializer.data,
-                'results': results
-            }, status=status.HTTP_201_CREATED)
+        # Crear la simulación primero (en estado 'running')
+        from agents.models import Simulation
+        from django.utils import timezone
         
-        except Exception as e:
-            return Response(
-                {'error': f'Error ejecutando simulación: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        simulation = Simulation.objects.create(
+            world=world,
+            num_agents=num_fumigators + num_scouts,
+            num_fumigators=num_fumigators,
+            num_scouts=num_scouts,
+            max_steps=max_steps,
+            status='pending',  # Cambiar a 'pending' para que no se inicie automáticamente
+            started_at=None  # No iniciar todavía
+        )
+        
+        # Retornar simulación creada (sin iniciar)
+        output_serializer = SimulationSerializer(simulation)
+        return Response({
+            'simulation': output_serializer.data,
+            'message': 'Simulación creada. Usa el endpoint /start/ para iniciarla.'
+        }, status=status.HTTP_201_CREATED)
     
     @action(detail=True, methods=['get'])
     def agents(self, request, pk=None):
@@ -114,6 +110,66 @@ class SimulationViewSet(viewsets.ModelViewSet):
         tasks = BlackboardTask.objects.filter(world=simulation.world)
         serializer = BlackboardTaskSerializer(tasks, many=True)
         return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def start(self, request, pk=None):
+        """
+        Inicia una simulación que está en estado 'pending'.
+        
+        POST /api/simulations/{id}/start/
+        """
+        simulation = self.get_object()
+        
+        if simulation.status != 'pending':
+            return Response({
+                'error': f'La simulación ya está en estado "{simulation.status}". Solo se pueden iniciar simulaciones pendientes.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Obtener parámetros de la simulación
+        world = simulation.world
+        num_fumigators = simulation.num_fumigators
+        num_scouts = simulation.num_scouts
+        max_steps = simulation.max_steps
+        min_infestation = 10  # Valor por defecto
+        
+        # Actualizar estado a 'running'
+        from django.utils import timezone
+        simulation.status = 'running'
+        simulation.started_at = timezone.now()
+        simulation.save()
+        
+        # Ejecutar simulación en background (thread separado)
+        import threading
+        from .agent_system import run_simulation
+        
+        def run_simulation_background():
+            try:
+                run_simulation(
+                    world_instance=world,
+                    num_fumigators=num_fumigators,
+                    num_scouts=num_scouts,
+                    max_steps=max_steps,
+                    min_infestation=min_infestation,
+                    simulation_id=str(simulation.id),
+                    emit_updates=True,
+                    step_delay=0.5  # Aumentar delay para visualización paso a paso
+                )
+            except Exception as e:
+                # Si hay error, actualizar estado de la simulación
+                simulation.status = 'failed'
+                simulation.completed_at = timezone.now()
+                simulation.results = {'error': str(e)}
+                simulation.save()
+        
+        # Iniciar simulación en thread separado
+        thread = threading.Thread(target=run_simulation_background, daemon=True)
+        thread.start()
+        
+        output_serializer = SimulationSerializer(simulation)
+        return Response({
+            'simulation': output_serializer.data,
+            'message': 'Simulación iniciada. Conéctate al WebSocket para ver actualizaciones en tiempo real.'
+        }, status=status.HTTP_200_OK)
 
 
 class BlackboardViewSet(viewsets.ReadOnlyModelViewSet):

@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { simulationsApi, worldsApi } from '../services/api'
 import { Simulation, World } from '../types'
+import { useModal } from '../hooks/useModal'
+import Modal from '../components/Modal'
 import './Simulations.css'
 
 export default function Simulations() {
@@ -10,11 +12,12 @@ export default function Simulations() {
   const [worlds, setWorlds] = useState<World[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateForm, setShowCreateForm] = useState(false)
+  const { modal, showError, showSuccess, closeModal } = useModal()
   const [formData, setFormData] = useState({
     world_id: '',
-    num_fumigators: 3,
-    num_scouts: 2,
-    max_steps: 1000,
+    num_fumigators: 5,
+    num_scouts: 1,
+    max_steps: 300,
     min_infestation: 10,
   })
 
@@ -55,26 +58,28 @@ export default function Simulations() {
       setShowCreateForm(false)
       setFormData({
         world_id: worlds[0]?.id || '',
-        num_fumigators: 3,
-        num_scouts: 2,
-        max_steps: 1000,
+        num_fumigators: 5,
+        num_scouts: 1,
+        max_steps: 300,
         min_infestation: 10,
       })
       loadSimulations()
+      showSuccess('Simulación creada correctamente')
     } catch (error: any) {
       console.error('Error creating simulation:', error)
-      alert(error.response?.data?.error || 'Error al crear la simulación')
+      showError(error.response?.data?.error || 'Error al crear la simulación')
     }
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('¿Estás seguro de eliminar esta simulación?')) return
+    if (!window.confirm('¿Estás seguro de eliminar esta simulación?')) return
     try {
       await simulationsApi.delete(id)
       loadSimulations()
+      showSuccess('Simulación eliminada correctamente')
     } catch (error) {
       console.error('Error deleting simulation:', error)
-      alert('Error al eliminar la simulación')
+      showError('Error al eliminar la simulación')
     }
   }
 
@@ -159,9 +164,9 @@ export default function Simulations() {
               <label>Máximo de Pasos</label>
               <input
                 type="number"
-                min="100"
+                min="50"
                 max="10000"
-                step="100"
+                step="50"
                 value={formData.max_steps}
                 onChange={(e) =>
                   setFormData({ ...formData, max_steps: parseInt(e.target.value) })
@@ -264,6 +269,13 @@ export default function Simulations() {
           ))}
         </div>
       )}
+      <Modal
+        isOpen={modal.isOpen}
+        onClose={closeModal}
+        title={modal.title}
+        message={modal.message}
+        type={modal.type}
+      />
     </div>
   )
 }

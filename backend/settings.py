@@ -18,6 +18,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'corsheaders',
     'rest_framework',
+    'channels',
     'world',
     'agents',
 ]
@@ -61,6 +62,17 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'backend.wsgi.application'
+
+# Django Channels configuration
+ASGI_APPLICATION = 'backend.asgi.application'
+
+# Channel layers configuration (usando in-memory para desarrollo)
+# Para producción, usar Redis: 'channels_redis.core.RedisChannelLayer'
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}
 
 DATABASES = {
     'default': {

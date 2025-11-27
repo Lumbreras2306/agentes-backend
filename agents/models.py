@@ -184,10 +184,10 @@ class Simulation(models.Model):
     world = models.ForeignKey('world.World', on_delete=models.CASCADE, related_name='simulations')
     
     # Configuración
-    num_agents = models.IntegerField(default=5, help_text="Número total de agentes en la simulación")
-    num_fumigators = models.IntegerField(default=3, help_text="Número de agentes fumigadores")
-    num_scouts = models.IntegerField(default=2, help_text="Número de agentes scouts")
-    max_steps = models.IntegerField(default=1000, help_text="Número máximo de pasos de simulación")
+    num_agents = models.IntegerField(default=6, help_text="Número total de agentes en la simulación")
+    num_fumigators = models.IntegerField(default=5, help_text="Número de agentes fumigadores")
+    num_scouts = models.IntegerField(default=1, help_text="Número de agentes scouts")
+    max_steps = models.IntegerField(default=300, help_text="Número máximo de pasos de simulación")
     
     # Estado
     status = models.CharField(
