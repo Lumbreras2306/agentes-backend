@@ -70,22 +70,17 @@ class SimulationConsumer(AsyncWebsocketConsumer):
                 simulation = await self.get_simulation(self.simulation_id)
                 await self.send_simulation_status(simulation)
             elif message_type == 'command_confirmation':
-                # Confirmación de que un agente completó un comando
+                # Confirmación de comando (legacy, mantenido para compatibilidad)
                 agent_id = data.get('agent_id')
                 command_id = data.get('command_id')
                 success = data.get('success', True)
-                
-                if agent_id:
-                    # Notificar al sistema de simulación que el comando fue confirmado
-                    from .agent_system import _receive_agent_confirmation
-                    _receive_agent_confirmation(self.simulation_id, agent_id)
-                    
-                    await self.send(text_data=json.dumps({
-                        'type': 'confirmation_received',
-                        'agent_id': agent_id,
-                        'command_id': command_id,
-                        'success': success
-                    }))
+
+                await self.send(text_data=json.dumps({
+                    'type': 'confirmation_received',
+                    'agent_id': agent_id,
+                    'command_id': command_id,
+                    'success': success
+                }))
         except json.JSONDecodeError:
             await self.send(text_data=json.dumps({
                 'type': 'error',
@@ -94,13 +89,17 @@ class SimulationConsumer(AsyncWebsocketConsumer):
     
     # Handler para mensajes del grupo
     async def simulation_update(self, event):
-        """Envía actualización de la simulación al cliente"""
+        """Envía actualización de la simulación al cliente (legacy)"""
         await self.send(text_data=json.dumps(event['data']))
-    
+
+    async def simulation_event(self, event):
+        """Envía evento granular de simulación al cliente"""
+        await self.send(text_data=json.dumps(event['event_data']))
+
     async def simulation_status(self, event):
         """Envía estado de la simulación al cliente"""
         await self.send(text_data=json.dumps(event['data']))
-    
+
     async def simulation_error(self, event):
         """Envía error de la simulación al cliente"""
         await self.send(text_data=json.dumps(event['data']))

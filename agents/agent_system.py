@@ -1,28 +1,21 @@
 """
 Sistema de agentes usando AgentPy que se comunican con el blackboard de Django.
 Los agentes coordinan para fumigar campos con infestación.
-Sistema basado en comandos: el backend envía comandos y espera confirmaciones del cliente.
+Sistema basado en eventos en tiempo real: el backend emite eventos granulares
+que el frontend/Unity pueden escuchar y renderizar.
 """
 import agentpy as ap
 from typing import List, Tuple, Optional, Dict, Any
 import math
-import asyncio
-import threading
 import time
-from collections import defaultdict
 from django.db import transaction
-from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
 from .services import BlackboardService
 from .models import BlackboardTask, TaskStatus
+from .simulation_events import EventEmitter
 from agents.models import Agent as AgentModel
 from world.models import World
 from world.world_generator import TileType
 from world.pathfinding import Pathfinder, DynamicPathfinder
-
-# Diccionario global para almacenar confirmaciones pendientes por simulación
-# Formato: {simulation_id: {agent_id: threading.Event}}
-pending_confirmations: Dict[str, Dict[str, threading.Event]] = defaultdict(dict)
 
 
 class ScoutAgent(ap.Agent):
@@ -95,51 +88,41 @@ class ScoutAgent(ap.Agent):
         
         return None
     
-    def _move_towards(self, target: Tuple[int, int], wait_confirmation: bool = True):
+    def _move_towards(self, target: Tuple[int, int]):
         """Se mueve hacia el objetivo usando pathfinding y revela infestación al pasar"""
+        old_status = self.status
         self.status = 'moving'
-        
+
+        if old_status != self.status:
+            self.model.event_emitter.emit_agent_status_changed(
+                str(self.id), 'scout', old_status, self.status, self.position
+            )
+
         # Usar pathfinding (el scout puede usar cualquier ruta, no le importa el peso)
         path = self.pathfinder.dijkstra(self.position, target, prefer_roads=False)
-        
+
         if path and len(path) > 1:
             # Moverse al siguiente paso del camino
             next_pos = path[1]
-            
-            # Si hay confirmaciones habilitadas, enviar comando y esperar
-            if wait_confirmation and hasattr(self.model, 'simulation_id'):
-                command = {
-                    'action': 'move',
-                    'from_position': list(self.position),
-                    'to_position': list(next_pos),
-                    'reveal_infestation': True  # El scout revela infestación al moverse
-                }
-                
-                confirmed = _send_agent_command(
-                    str(self.model.simulation_id),
-                    str(self.id),
-                    command,
-                    wait_for_confirmation=True,
-                    timeout=5.0
-                )
-                
-                if confirmed:
-                    # Solo ejecutar movimiento después de confirmación
-                    self.position = next_pos
-                    self._reveal_infestation_around_position(next_pos)
-                else:
-                    # Timeout: ejecutar directamente (fallback)
-                    self.position = next_pos
-                    self._reveal_infestation_around_position(next_pos)
-            else:
-                # Modo sin confirmaciones (fallback)
-                self.position = next_pos
-                self._reveal_infestation_around_position(next_pos)
+            from_pos = self.position
+
+            # Emitir evento de movimiento
+            self.model.event_emitter.emit_agent_moved(
+                str(self.id), 'scout', from_pos, next_pos, path
+            )
+
+            # Ejecutar movimiento
+            self.position = next_pos
+            self._reveal_infestation_around_position(next_pos)
     
     def _reveal_infestation_around_position(self, pos: Tuple[int, int]):
         """Revela infestación en la posición actual y las filas arriba y abajo (3 filas total)"""
         x, z = pos
-        
+
+        # Recopilar todas las posiciones reveladas para emitir un solo evento
+        revealed_positions = []
+        infestation_data = []
+
         # Analizar la fila actual y una arriba y una abajo
         for dz in [-1, 0, 1]:
             analyze_z = z + dz
@@ -147,30 +130,37 @@ class ScoutAgent(ap.Agent):
                 # Analizar toda la fila
                 for analyze_x in range(self.width):
                     field_pos = (analyze_x, analyze_z)
-                    
+
                     # Solo analizar campos (no caminos ni granero)
                     if self.grid[analyze_z][analyze_x] != TileType.FIELD:
                         continue
-                    
+
                     # Si ya fue analizado, saltar
                     if field_pos in self.analyzed_fields:
                         continue
-                    
+
                     # Marcar como analizado
                     self.analyzed_fields.add(field_pos)
                     self.fields_analyzed += 1
-                    
+                    revealed_positions.append(field_pos)
+
                     # Obtener nivel de infestación
                     infestation = self.infestation_grid[analyze_z][analyze_x]
-                    
+
+                    # Agregar datos de infestación
+                    infestation_data.append({
+                        'position': [analyze_x, analyze_z],
+                        'infestation_level': infestation
+                    })
+
                     # Si hay infestación significativa, crear tarea en el blackboard
                     if infestation >= self.model.min_infestation:
                         # Verificar si ya existe una tarea para este campo
                         existing_task = self.blackboard.get_task_by_position(analyze_x, analyze_z)
-                        
+
                         if not existing_task:
                             # Crear nueva tarea
-                            self.blackboard.create_task(
+                            task = self.blackboard.create_task(
                                 position_x=analyze_x,
                                 position_z=analyze_z,
                                 infestation_level=infestation,
@@ -180,6 +170,23 @@ class ScoutAgent(ap.Agent):
                                 }
                             )
                             self.discoveries += 1
+
+                            # Emitir evento de infestación descubierta
+                            self.model.event_emitter.emit_infestation_discovered(
+                                str(self.id), field_pos, infestation, str(task.id)
+                            )
+
+                            # Emitir evento de tarea creada
+                            self.model.event_emitter.emit_task_created(
+                                str(task.id), field_pos, infestation,
+                                task.priority, str(self.id)
+                            )
+
+        # Emitir evento de área revelada (consolidado)
+        if revealed_positions:
+            self.model.event_emitter.emit_scout_reveal_area(
+                str(self.id), revealed_positions, infestation_data
+            )
     
     def _analyze_field(self, field_pos: Tuple[int, int]):
         """Analiza un campo para descubrir su nivel de infestación (legacy, ahora usa _reveal_infestation_around_position)"""
@@ -317,32 +324,51 @@ class FumigatorAgent(ap.Agent):
     def _find_task(self):
         """Busca la tarea más infestada disponible en el blackboard"""
         available_tasks = self.blackboard.get_available_tasks(limit=50)
-        
+
         if not available_tasks:
+            if self.status != 'idle':
+                self.status = 'idle'
+                self.model.event_emitter.emit_agent_idle(
+                    str(self.id), 'fumigator', self.position
+                )
             return
-        
+
         # Seleccionar la tarea más infestada que pueda completar
         best_task = None
         max_infestation = -1
-        
+
         for task in available_tasks:
             # Verificar si tiene suficiente pesticida para esta tarea
             required_pesticide = task.infestation_level
             if self.pesticide_level < required_pesticide:
                 continue  # No tiene suficiente pesticida, saltar esta tarea
-            
+
             # Seleccionar la más infestada
             if task.infestation_level > max_infestation:
                 # Intentar asignar la tarea
                 if self.blackboard.assign_task(task, str(self.id)):
                     max_infestation = task.infestation_level
                     best_task = task
-        
+
         if best_task:
             self.current_task = best_task
             self._calculate_path_to_task()
+
+            # Emitir evento de tarea asignada
+            self.model.event_emitter.emit_task_assigned(
+                str(best_task.id), str(self.id),
+                (best_task.position_x, best_task.position_z),
+                best_task.infestation_level
+            )
+
             # Marcar como en progreso
             self.blackboard.start_task(best_task)
+
+            # Emitir evento de tarea iniciada
+            self.model.event_emitter.emit_task_started(
+                str(best_task.id), str(self.id),
+                (best_task.position_x, best_task.position_z)
+            )
     
     def _calculate_path_to_task(self):
         """Calcula el camino hacia la tarea actual usando pathfinding con pesos dinámicos"""
@@ -372,81 +398,75 @@ class FumigatorAgent(ap.Agent):
         """Trabaja en la tarea actual"""
         if not self.current_task:
             return
-        
+
         # Verificar si tiene pesticida suficiente antes de continuar
         if self.pesticide_level <= 0:
+            # Emitir evento de pesticida bajo
+            self.model.event_emitter.emit_pesticide_low(
+                str(self.id), self.position, 0, self.pesticide_capacity
+            )
             # Cancelar tarea y regresar al granero
             self._cancel_task_and_return_to_barn()
             return
-        
+
         target = (self.current_task.position_x, self.current_task.position_z)
-        
+
         # Si ya está en el destino, fumigar
         if self.position == target:
             # Verificar pesticida antes de fumigar
             infestation_level = self.current_task.infestation_level
             required_pesticide = infestation_level  # 1 unidad por cada 1% de infestación
-            
+
             if self.pesticide_level < required_pesticide:
+                # Emitir evento de pesticida bajo
+                self.model.event_emitter.emit_pesticide_low(
+                    str(self.id), self.position,
+                    self.pesticide_level, self.pesticide_capacity
+                )
                 # No tiene suficiente pesticida, cancelar tarea y regresar
                 self._cancel_task_and_return_to_barn()
                 return
-            
-            # Enviar comando de fumigación y esperar confirmación
-            if hasattr(self.model, 'simulation_id') and self.model.simulation_id:
-                command = {
-                    'action': 'fumigate',
-                    'position': list(target),
-                    'infestation_level': infestation_level,
-                    'required_pesticide': required_pesticide
-                }
-                
-                confirmed = _send_agent_command(
-                    str(self.model.simulation_id),
-                    str(self.id),
-                    command,
-                    wait_for_confirmation=True,
-                    timeout=5.0
-                )
-                
-                if confirmed:
-                    # Ejecutar fumigación después de confirmación
-                    self.status = 'fumigating'
-                    self._complete_task()
-                else:
-                    # Fallback: ejecutar directamente
-                    self.status = 'fumigating'
-                    self._complete_task()
-            else:
-                # Modo sin confirmaciones
-                self.status = 'fumigating'
-                self._complete_task()
+
+            # Emitir evento de fumigación iniciada
+            self.model.event_emitter.emit_fumigation_started(
+                str(self.id), target, infestation_level, str(self.current_task.id)
+            )
+
+            # Ejecutar fumigación
+            self.status = 'fumigating'
+            self._complete_task()
         else:
             # Moverse hacia el destino
+            old_status = self.status
             self.status = 'moving'
+            if old_status != self.status:
+                self.model.event_emitter.emit_agent_status_changed(
+                    str(self.id), 'fumigator', old_status, self.status, self.position
+                )
             self._move_towards_target()
     
-    def _move_towards_target(self, wait_confirmation: bool = True):
+    def _move_towards_target(self):
         """Se mueve hacia el objetivo, fumiga celdas en el camino y aumenta peso de campos pisados"""
         if self.path and self.path_index < len(self.path) - 1:
             self.path_index += 1
             next_pos = self.path[self.path_index]
-            
+            from_pos = self.position
+
             # Verificar si es un campo y aumentar su peso exponencialmente
             x, z = next_pos
             should_fumigate = False
             fumigation_data = None
-            
+
             if self.grid[z][x] == TileType.FIELD:
                 # Aumentar peso exponencialmente cada vez que se pisa
                 current_weight = self.field_weights.get(next_pos, 0.0)
-                
+
                 if current_weight == 0.0:
                     self.field_weights[next_pos] = 5.0
                 else:
                     exponential_factor = 1.8
                     self.field_weights[next_pos] = current_weight * exponential_factor
-                
+
                 # Verificar si necesita fumigar la celda (mientras se mueve)
                 if self.infestation_grid[z][x] > 0 and self.pesticide_level > 0:
                     should_fumigate = True
@@ -457,90 +477,107 @@ class FumigatorAgent(ap.Agent):
                         'pesticide_needed': pesticide_needed,
                         'position': [x, z]
                     }
-            
-            # Si hay confirmaciones habilitadas, enviar comando y esperar
-            if wait_confirmation and hasattr(self.model, 'simulation_id') and self.model.simulation_id:
-                command = {
-                    'action': 'move',
-                    'from_position': list(self.position),
-                    'to_position': list(next_pos),
-                    'fumigate_on_path': should_fumigate,
-                    'fumigation_data': fumigation_data
-                }
-                
-                confirmed = _send_agent_command(
-                    str(self.model.simulation_id),
-                    str(self.id),
-                    command,
-                    wait_for_confirmation=True,
-                    timeout=5.0
-                )
-                
-                if confirmed:
-                    # Solo ejecutar movimiento después de confirmación
-                    self._execute_move(next_pos, fumigation_data)
-                else:
-                    # Timeout: ejecutar directamente (fallback)
-                    self._execute_move(next_pos, fumigation_data)
-            else:
-                # Modo sin confirmaciones (fallback)
-                self._execute_move(next_pos, fumigation_data)
+
+            # Emitir evento de movimiento
+            self.model.event_emitter.emit_agent_moved(
+                str(self.id), 'fumigator', from_pos, next_pos, self.path
+            )
+
+            # Ejecutar movimiento y fumigación si corresponde
+            self._execute_move(next_pos, fumigation_data)
     
     def _execute_move(self, next_pos: Tuple[int, int], fumigation_data: Optional[Dict[str, Any]]):
         """Ejecuta el movimiento y fumigación si es necesario"""
         x, z = next_pos
         self.position = next_pos
-        
+
         # Ejecutar fumigación si es necesario
         if fumigation_data:
             infestation_level = fumigation_data['infestation_level']
             pesticide_needed = fumigation_data['pesticide_needed']
-            
+            old_infestation = self.infestation_grid[z][x]
+
+            # Emitir evento de fumigación en camino
+            self.model.event_emitter.emit_fumigation_started(
+                str(self.id), next_pos, old_infestation, None
+            )
+
             self.pesticide_level -= pesticide_needed
             self.infestation_grid[z][x] = max(0, infestation_level - pesticide_needed)
-            
+            new_infestation = self.infestation_grid[z][x]
+
+            # Emitir evento de cambio de infestación
+            self.model.event_emitter.emit_infestation_changed(
+                next_pos, old_infestation, new_infestation
+            )
+
             # Si se completó la fumigación de esta celda, crear/completar tarea si existe
             if self.infestation_grid[z][x] == 0:
                 task = self.blackboard.get_task_by_position(x, z)
                 if task:
                     self.blackboard.complete_task(task)
                     self.fields_fumigated += 1
+
+                    # Emitir evento de fumigación completada
+                    self.model.event_emitter.emit_fumigation_completed(
+                        str(self.id), next_pos, pesticide_needed, str(task.id)
+                    )
     
     def _complete_task(self):
         """Completa la tarea actual y consume pesticida"""
         if self.current_task:
             # Obtener nivel de infestación de la tarea
             infestation_level = self.current_task.infestation_level
-            
+            task_id = str(self.current_task.id)
+            position = (self.current_task.position_x, self.current_task.position_z)
+
             # Consumir pesticida proporcional a la infestación
             # 1 unidad de pesticida por cada 1% de infestación
             pesticide_used = infestation_level
             self.pesticide_level = max(0, self.pesticide_level - pesticide_used)
-            
+
             # Actualizar infestación en el mundo (reducir a 0)
+            old_infestation = self.world_instance.infestation_grid[self.current_task.position_z][self.current_task.position_x]
             self.world_instance.infestation_grid[self.current_task.position_z][self.current_task.position_x] = 0
-            
+
+            # Emitir evento de cambio de infestación
+            self.model.event_emitter.emit_infestation_changed(
+                position, old_infestation, 0
+            )
+
             # Guardar cambios en el mundo
             self.world_instance.save()
-            
+
             # Marcar tarea como completada en el blackboard
+            import time
+            completion_time = time.time()
             self.blackboard.complete_task(self.current_task)
-            
+
+            # Emitir evento de fumigación completada
+            self.model.event_emitter.emit_fumigation_completed(
+                str(self.id), position, pesticide_used, task_id
+            )
+
+            # Emitir evento de tarea completada
+            self.model.event_emitter.emit_task_completed(
+                task_id, str(self.id), position, completion_time
+            )
+
             # Actualizar estadísticas
             self.fields_fumigated += 1
             self.tasks_completed += 1
-            
+
             # Guardar posición completada para buscar siguiente tarea en radio
-            completed_pos = (self.current_task.position_x, self.current_task.position_z)
-            
+            completed_pos = position
+
             # Limpiar
             self.current_task = None
             self.path = []
             self.path_index = 0
-            
+
             if hasattr(self, 'fumigation_steps'):
                 delattr(self, 'fumigation_steps')
-            
+
             # Si se quedó sin pesticida, regresar al granero
             if self.pesticide_level <= 0:
                 self._return_to_barn()
@@ -578,96 +615,88 @@ class FumigatorAgent(ap.Agent):
             self.path = [self.position, self.barn_position]
             self.path_index = 0
     
-    def _move_towards_barn(self, wait_confirmation: bool = True):
+    def _move_towards_barn(self):
         """Se mueve hacia el granero y aumenta peso de campos pisados exponencialmente"""
         if not self.path or self.path_index >= len(self.path) - 1:
             # Ya llegó al granero
-            if hasattr(self.model, 'simulation_id') and self.model.simulation_id:
-                command = {
-                    'action': 'refill',
-                    'position': list(self.barn_position)
-                }
-                _send_agent_command(
-                    str(self.model.simulation_id),
-                    str(self.id),
-                    command,
-                    wait_for_confirmation=wait_confirmation,
-                    timeout=5.0
-                )
-            
+            old_status = self.status
             self.status = 'refilling'
+            if old_status != self.status:
+                self.model.event_emitter.emit_agent_status_changed(
+                    str(self.id), 'fumigator', old_status, self.status, self.position
+                )
+
+            # Emitir evento de recarga iniciada
+            self.model.event_emitter.emit_agent_refilling(
+                str(self.id), self.barn_position,
+                self.pesticide_level, self.pesticide_capacity
+            )
+
             self.path = []
             self.path_index = 0
             return
-        
+
         # Moverse al siguiente paso del camino
         self.path_index += 1
         next_pos = self.path[self.path_index]
-        
+        from_pos = self.position
+
         # Verificar si es un campo y aumentar su peso exponencialmente
         x, z = next_pos
         if self.grid[z][x] == TileType.FIELD:
             # Aumentar peso exponencialmente cada vez que se pisa
             current_weight = self.field_weights.get(next_pos, 0.0)
-            
+
             if current_weight == 0.0:
                 self.field_weights[next_pos] = 5.0
             else:
                 exponential_factor = 1.8
                 self.field_weights[next_pos] = current_weight * exponential_factor
-        
-        # Si hay confirmaciones habilitadas, enviar comando
-        if wait_confirmation and hasattr(self.model, 'simulation_id') and self.model.simulation_id:
-            command = {
-                'action': 'move',
-                'from_position': list(self.position),
-                'to_position': list(next_pos),
-                'fumigate_on_path': False
-            }
-            
-            confirmed = _send_agent_command(
-                str(self.model.simulation_id),
-                str(self.id),
-                command,
-                wait_for_confirmation=True,
-                timeout=5.0
-            )
-            
-            if confirmed:
-                # Solo ejecutar movimiento después de confirmación
-                self.position = next_pos
-            else:
-                # Timeout: ejecutar directamente (fallback)
-                self.position = next_pos
-        else:
-            self.position = next_pos
-        
+
+        # Emitir evento de movimiento
+        self.model.event_emitter.emit_agent_moved(
+            str(self.id), 'fumigator', from_pos, next_pos, self.path
+        )
+
+        # Ejecutar movimiento
+        self.position = next_pos
+
         # Si llegó al granero, cambiar a estado de reabastecimiento
         if self.position == self.barn_position:
-            if hasattr(self.model, 'simulation_id') and self.model.simulation_id:
-                command = {
-                    'action': 'refill',
-                    'position': list(self.barn_position)
-                }
-                _send_agent_command(
-                    str(self.model.simulation_id),
-                    str(self.id),
-                    command,
-                    wait_for_confirmation=wait_confirmation,
-                    timeout=5.0
-                )
-            
+            old_status = self.status
             self.status = 'refilling'
+            if old_status != self.status:
+                self.model.event_emitter.emit_agent_status_changed(
+                    str(self.id), 'fumigator', old_status, self.status, self.position
+                )
+
+            # Emitir evento de recarga iniciada
+            self.model.event_emitter.emit_agent_refilling(
+                str(self.id), self.barn_position,
+                self.pesticide_level, self.pesticide_capacity
+            )
+
             self.path = []
             self.path_index = 0
     
     def _refill_pesticide(self):
         """Reabastece el tanque de pesticida en el granero"""
         # Reabastecer completamente el tanque
+        old_pesticide = self.pesticide_level
         self.pesticide_level = self.pesticide_capacity
-        
+
+        # Emitir evento de recarga completada
+        self.model.event_emitter.emit_agent_refill_completed(
+            str(self.id), self.barn_position, self.pesticide_level
+        )
+
         # Volver a estado idle para buscar nuevas tareas
+        old_status = self.status
         self.status = 'idle'
+        if old_status != self.status:
+            self.model.event_emitter.emit_agent_status_changed(
+                str(self.id), 'fumigator', old_status, self.status, self.position
+            )
     
     def _cancel_task_and_return_to_barn(self):
         """Cancela la tarea actual y regresa al granero"""
@@ -738,11 +767,14 @@ class FumigationModel(ap.Model):
         self.num_fumigators = self.p.num_fumigators
         self.num_scouts = self.p.num_scouts
         self.min_infestation = self.p.min_infestation
-        self.simulation_id = self.p.get('simulation_id')  # ID de simulación para comandos
-        
+        self.simulation_id = self.p.get('simulation_id')  # ID de simulación para eventos
+
         # Inicializar servicio de blackboard
         from .services import BlackboardService
         self.blackboard_service = BlackboardService(self.world_instance)
+
+        # Inicializar emisor de eventos
+        self.event_emitter = EventEmitter(str(self.simulation_id)) if self.simulation_id else None
         
         # Encontrar todas las celdas del granero (5 celdas en línea)
         pathfinder_temp = Pathfinder(self.world_instance.grid, self.world_instance.width, self.world_instance.height)
@@ -770,15 +802,39 @@ class FumigationModel(ap.Model):
         
         # Asignar cada agente a una celda diferente del granero
         # Distribuir los agentes entre las 5 celdas del barn
+        agents_data = []
         for idx, agent in enumerate(self.agents):
             # Usar módulo para distribuir entre las celdas disponibles
             barn_cell_idx = idx % len(barn_cells)
             assigned_barn_pos = barn_cells[barn_cell_idx]
-            
+
             # Asignar posición inicial
             self.start_positions[agent.id] = assigned_barn_pos
             # Actualizar la posición del agente
             agent.position = assigned_barn_pos
+
+            # Recopilar datos del agente para evento de inicialización
+            agent_type = 'scout' if isinstance(agent, ScoutAgent) else 'fumigator'
+            agents_data.append({
+                'id': str(agent.id),
+                'type': agent_type,
+                'position': list(agent.position)
+            })
+
+            # Emitir evento de agente creado
+            if self.event_emitter:
+                self.event_emitter.emit_agent_spawned(
+                    str(agent.id), agent_type, agent.position
+                )
+
+        # Emitir evento de simulación inicializada
+        if self.event_emitter:
+            self.event_emitter.emit_simulation_initialized(
+                self.num_fumigators,
+                self.num_scouts,
+                (self.world_instance.width, self.world_instance.height),
+                agents_data
+            )
     
     def step(self):
         """Ejecuta un paso de la simulación"""
@@ -823,75 +879,6 @@ class FumigationModel(ap.Model):
             agent_model.save()
 
 
-def _send_simulation_update(simulation_id: str, data: Dict[str, Any]):
-    """
-    Envía una actualización de simulación a través de WebSocket.
-    """
-    try:
-        channel_layer = get_channel_layer()
-        if channel_layer:
-            async_to_sync(channel_layer.group_send)(
-                f'simulation_{simulation_id}',
-                {
-                    'type': 'simulation_update',
-                    'data': data
-                }
-            )
-    except Exception as e:
-        # Si falla el envío WebSocket, continuar con la simulación
-        print(f"Error enviando actualización WebSocket: {e}")
-
-
-def _send_agent_command(simulation_id: str, agent_id: str, command: Dict[str, Any], wait_for_confirmation: bool = True, timeout: float = 5.0) -> bool:
-    """
-    Envía un comando a un agente y espera confirmación del cliente.
-    
-    Args:
-        simulation_id: ID de la simulación
-        agent_id: ID del agente
-        command: Diccionario con el comando (type, target_position, action, etc.)
-        wait_for_confirmation: Si True, espera confirmación antes de retornar
-        timeout: Tiempo máximo de espera en segundos
-    
-    Returns:
-        True si se recibió confirmación, False si timeout o error
-    """
-    try:
-        # Crear evento para esperar confirmación
-        if wait_for_confirmation:
-            confirmation_event = threading.Event()
-            pending_confirmations[simulation_id][agent_id] = confirmation_event
-        
-        # Enviar comando vía WebSocket
-        _send_simulation_update(simulation_id, {
-            'type': 'agent_command',
-            'simulation_id': simulation_id,
-            'agent_id': agent_id,
-            'command': command
-        })
-        
-        # Esperar confirmación si es necesario
-        if wait_for_confirmation:
-            confirmed = confirmation_event.wait(timeout=timeout)
-            # Limpiar evento después de usarlo
-            if agent_id in pending_confirmations[simulation_id]:
-                del pending_confirmations[simulation_id][agent_id]
-            return confirmed
-        
-        return True
-    except Exception as e:
-        print(f"Error enviando comando a agente {agent_id}: {e}")
-        return False
-
-
-def _receive_agent_confirmation(simulation_id: str, agent_id: str):
-    """
-    Recibe confirmación de que un agente completó su comando.
-    Llamado desde el consumer WebSocket cuando llega una confirmación.
-    """
-    if simulation_id in pending_confirmations and agent_id in pending_confirmations[simulation_id]:
-        event = pending_confirmations[simulation_id][agent_id]
-        event.set()  # Despertar el thread que está esperando
 
 
 def run_simulation(
@@ -942,7 +929,8 @@ def run_simulation(
             'world_instance': world_instance,
             'num_fumigators': num_fumigators,
             'num_scouts': num_scouts,
-            'min_infestation': min_infestation
+            'min_infestation': min_infestation,
+            'simulation_id': str(simulation.id)  # Agregar simulation_id a parámetros
         }
         
         # Crear modelo AgentPy
@@ -998,35 +986,28 @@ def run_simulation(
         
         # NO inicializar tareas automáticamente - el scout las descubrirá progresivamente
         # Las tareas se crearán cuando el scout revele infestación
-        tasks_created = 0
         print(f"Simulación iniciada - el scout descubrirá infestación progresivamente")
-        
-        # Enviar estado inicial
-        if emit_updates:
-            _send_simulation_update(str(simulation.id), {
-                'type': 'simulation_started',
-                'simulation_id': str(simulation.id),
-                'step': 0,
-                'status': 'running',
-                'message': f'Simulación iniciada con {tasks_created} tareas iniciales'
-            })
         
         # Ejecutar simulación paso a paso
         steps_executed = 0
         
         for step in range(max_steps):
+            # Actualizar paso actual en el event emitter
+            if model.event_emitter:
+                model.event_emitter.set_current_step(step + 1)
+
             # Ejecutar un paso del modelo (esto ejecutará los comandos de los agentes)
             model.step()
             model.update()
             steps_executed = step + 1
-            
+
             # Delay para visualización en tiempo real (solo si se emiten actualizaciones)
             # Este delay asegura que cada paso se vea claramente
             if emit_updates and step_delay > 0:
                 time.sleep(step_delay)
-            
-            # Enviar actualización después de cada paso para visualización paso a paso
-            if emit_updates:
+
+            # Enviar actualización de paso (resumen del estado)
+            if emit_updates and model.event_emitter:
                 # Obtener estado actual de los agentes
                 agents_data = []
                 # Verificar que los agentes existan antes de iterar
@@ -1038,7 +1019,7 @@ def run_simulation(
                             'position': list(agent.position),
                             'status': agent.status
                         }
-                        
+
                         if isinstance(agent, FumigatorAgent):
                             agent_data.update({
                                 'pesticide_level': agent.pesticide_level,
@@ -1056,9 +1037,9 @@ def run_simulation(
                                 'fields_analyzed': agent.fields_analyzed,
                                 'discoveries': agent.discoveries
                             })
-                        
+
                         agents_data.append(agent_data)
-                
+
                 # Obtener tareas del blackboard
                 available_tasks = model.blackboard_service.get_available_tasks(limit=50)
                 tasks_data = [{
@@ -1070,19 +1051,22 @@ def run_simulation(
                     'status': task.status,
                     'assigned_agent_id': task.assigned_agent_id
                 } for task in available_tasks]
-                
-                # Obtener grid de infestación actualizado para enviar al frontend
-                infestation_grid = world_instance.infestation_grid
-                
-                _send_simulation_update(str(simulation.id), {
-                    'type': 'step_update',
-                    'simulation_id': str(simulation.id),
-                    'step': steps_executed,
-                    'agents': agents_data,
-                    'tasks': tasks_data,
-                    'infestation_grid': infestation_grid,  # Enviar grid de infestación actualizado
-                    'status': 'running'
-                })
+
+                # Calcular estadísticas
+                total_tasks_completed = sum(agent.tasks_completed for agent in model.fumigators)
+                total_fields_fumigated = sum(agent.fields_fumigated for agent in model.fumigators)
+                total_fields_analyzed = sum(agent.fields_analyzed for agent in model.scouts)
+
+                statistics = {
+                    'tasks_completed': total_tasks_completed,
+                    'fields_fumigated': total_fields_fumigated,
+                    'fields_analyzed': total_fields_analyzed
+                }
+
+                # Emitir evento de paso de simulación
+                model.event_emitter.emit_simulation_step(
+                    agents_data, tasks_data, statistics
+                )
             
             # Verificar condiciones de terminación
             # Solo terminar si:
@@ -1146,20 +1130,15 @@ def run_simulation(
         }
         
         simulation.save()
-        
+
         # Enviar actualización final
-        if emit_updates:
-            _send_simulation_update(str(simulation.id), {
-                'type': 'simulation_completed',
-                'simulation_id': str(simulation.id),
-                'step': steps_executed,
-                'status': 'completed',
-                'results': {
-                    'tasks_completed': total_tasks_completed,
-                    'fields_fumigated': total_fields_fumigated,
-                    'fields_analyzed': total_fields_analyzed,
-                    'discoveries': total_discoveries
-                }
+        if emit_updates and model.event_emitter:
+            model.event_emitter.emit_simulation_completed({
+                'tasks_completed': total_tasks_completed,
+                'fields_fumigated': total_fields_fumigated,
+                'fields_analyzed': total_fields_analyzed,
+                'discoveries': total_discoveries,
+                'steps_executed': steps_executed
             })
         
         return {

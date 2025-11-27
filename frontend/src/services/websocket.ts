@@ -4,19 +4,60 @@
  */
 
 export type SimulationUpdateType =
+  // Eventos de conexión
   | 'connection'
-  | 'simulation_started'
-  | 'step_update'
+  | 'pong'
+  // Eventos de simulación
+  | 'simulation_initialized'
+  | 'simulation_step'
   | 'simulation_completed'
   | 'simulation_error'
+  // Eventos de agente general
+  | 'agent_spawned'
+  | 'agent_moved'
+  | 'agent_idle'
+  | 'agent_status_changed'
+  // Eventos de scout
+  | 'scout_analyzing'
+  | 'infestation_discovered'
+  | 'scout_reveal_area'
+  // Eventos de fumigador
+  | 'fumigation_started'
+  | 'fumigation_progress'
+  | 'fumigation_completed'
+  | 'agent_refilling'
+  | 'agent_refill_completed'
+  | 'pesticide_low'
+  // Eventos de tareas
+  | 'task_created'
+  | 'task_assigned'
+  | 'task_started'
+  | 'task_completed'
+  | 'task_failed'
+  // Eventos de mundo
+  | 'infestation_changed'
+  // Legacy (mantenidos para compatibilidad)
+  | 'simulation_started'
+  | 'step_update'
   | 'agent_command'
-  | 'pong'
 
 export interface SimulationUpdate {
   type: SimulationUpdateType
   simulation_id?: string
   step?: number
+  timestamp?: number
+
+  // Campos de eventos de simulación
+  num_fumigators?: number
+  num_scouts?: number
+  world_size?: [number, number]
   status?: string
+  message?: string
+  error?: string
+
+  // Campos de agentes
+  agent_id?: string
+  agent_type?: 'scout' | 'fumigator'
   agents?: Array<{
     id: string
     type: 'scout' | 'fumigator'
@@ -34,6 +75,41 @@ export interface SimulationUpdate {
     fields_analyzed?: number
     discoveries?: number
   }>
+
+  // Campos de posición y movimiento
+  position?: [number, number]
+  from_position?: [number, number]
+  to_position?: [number, number]
+  path?: Array<[number, number]>
+  old_status?: string
+  new_status?: string
+
+  // Campos de scout
+  area_size?: [number, number]
+  revealed_positions?: Array<[number, number]>
+  infestation_data?: Array<{
+    position: [number, number]
+    infestation_level: number
+  }>
+
+  // Campos de fumigación
+  infestation_level?: number
+  required_pesticide?: number
+  pesticide_used?: number
+  pesticide_needed?: number
+  progress?: number
+  remaining_infestation?: number
+  old_level?: number
+  new_level?: number
+
+  // Campos de pesticida
+  current_pesticide?: number
+  pesticide_level?: number
+  capacity?: number
+  percentage?: number
+
+  // Campos de tareas
+  task_id?: string
   tasks?: Array<{
     id: string
     position_x: number
@@ -43,9 +119,31 @@ export interface SimulationUpdate {
     status: string
     assigned_agent_id: string | null
   }>
-  infestation_grid?: number[][] // Grid de infestación actualizado en tiempo real
-  // Comando de agente (nuevo sistema)
-  agent_id?: string
+  priority?: string
+  discovered_by?: string
+  completion_time?: number
+  reason?: string
+
+  // Estadísticas
+  statistics?: {
+    tasks_completed?: number
+    fields_fumigated?: number
+    fields_analyzed?: number
+  }
+
+  // Resultados finales
+  results?: {
+    tasks_completed?: number
+    fields_fumigated?: number
+    fields_analyzed?: number
+    discoveries?: number
+    steps_executed?: number
+  }
+
+  // Legacy - grid de infestación (para compatibilidad)
+  infestation_grid?: number[][]
+
+  // Legacy - comandos (mantenidos para compatibilidad)
   command?: {
     action: 'move' | 'fumigate' | 'analyze' | 'refill'
     from_position?: [number, number]
@@ -61,14 +159,6 @@ export interface SimulationUpdate {
     required_pesticide?: number
     reveal_infestation?: boolean
   }
-  results?: {
-    tasks_completed?: number
-    fields_fumigated?: number
-    fields_analyzed?: number
-    discoveries?: number
-  }
-  message?: string
-  timestamp?: number
 }
 
 export class SimulationWebSocket {
