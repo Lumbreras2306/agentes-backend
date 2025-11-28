@@ -33,7 +33,7 @@ export default function SimulationDetailNew() {
   const [activeAnimations, setActiveAnimations] = useState<Map<string, ActiveAnimation>>(new Map())
 
   const wsRef = useRef<SimulationWebSocket | null>(null)
-  const animationTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  const animationTimeoutRef = useRef<Map<string, number>>(new Map())
 
   useEffect(() => {
     if (id) {
@@ -153,7 +153,7 @@ export default function SimulationDetailNew() {
   const connectWebSocket = () => {
     if (!id) return
 
-    const ws = new SimulationWebSocket(`ws://localhost:8000/ws/simulations/${id}/`)
+    const ws = new SimulationWebSocket(id)
 
     ws.on('connection', (data) => {
       console.log('WebSocket connected:', data)
@@ -171,21 +171,26 @@ export default function SimulationDetailNew() {
       setSimulation(prev => prev ? { ...prev, status: 'completed' } : null)
     })
 
-    ws.on('scout_exploration_complete', (data) => {
-      console.log('Scout exploration complete:', data)
-      setCurrentPhase('fumigation')
+    // Usar listeners genéricos para eventos no tipados
+    ws.on('*', (data) => {
+      const dataType = (data as any).type || data.type
+      if (dataType === 'scout_exploration_complete') {
+        console.log('Scout exploration complete:', data)
+        setCurrentPhase('fumigation')
+      }
+      if (dataType === 'error') {
+        console.error('WebSocket error:', data)
+      }
+      if (dataType === 'close') {
+        console.log('WebSocket disconnected')
+        setWsConnected(false)
+      }
     })
 
-    ws.on('error', (error) => {
-      console.error('WebSocket error:', error)
-    })
-
-    ws.on('close', () => {
-      console.log('WebSocket disconnected')
+    ws.connect().catch((error) => {
+      console.error('Error connecting WebSocket:', error)
       setWsConnected(false)
     })
-
-    ws.connect()
     wsRef.current = ws
   }
 
@@ -199,6 +204,8 @@ export default function SimulationDetailNew() {
 
         // Create animation for movement
         if (existingAgent &&
+            existingAgent.position_x !== undefined &&
+            existingAgent.position_z !== undefined &&
             (existingAgent.position_x !== agentData.position[0] ||
              existingAgent.position_z !== agentData.position[1])) {
           const animation: ActiveAnimation = {
@@ -226,13 +233,14 @@ export default function SimulationDetailNew() {
           startAnimation(animation)
 
           // Reveal cells around scout position
-          const [x, z] = agentData.position
+          const [, z] = agentData.position
           const newRevealed = new Set(revealedCells)
           for (let dz = -1; dz <= 1; dz++) {
-            for (let dx = -world!.width || 0; dx < (world?.width || 0); dx++) {
+            for (let dx = -1; dx <= 1; dx++) {
               const checkZ = z + dz
-              const checkX = dx
-              if (checkZ >= 0 && checkZ < (world?.height || 0)) {
+              const checkX = agentData.position[0] + dx
+              if (checkZ >= 0 && checkZ < (world?.height || 0) &&
+                  checkX >= 0 && checkX < (world?.width || 0)) {
                 newRevealed.add(`${checkX},${checkZ}`)
               }
             }
@@ -253,10 +261,14 @@ export default function SimulationDetailNew() {
           startAnimation(animation)
         }
 
+        const existingAgentData = existingAgent || agents.find(a => a.agent_id === agentData.agent_id)
+        
         return {
           id: agentData.agent_id,
           agent_id: agentData.agent_id,
+          world: existingAgentData?.world || simulation?.world || '',
           agent_type: agentData.agent_type,
+          is_active: existingAgentData?.is_active ?? true,
           position_x: agentData.position[0],
           position_z: agentData.position[1],
           status: agentData.status,
@@ -264,7 +276,9 @@ export default function SimulationDetailNew() {
           fields_fumigated: agentData.fields_fumigated || 0,
           metadata: {
             pesticide_level: agentData.pesticide_level,
-          }
+          },
+          created_at: existingAgentData?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         } as Agent
       })
 

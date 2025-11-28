@@ -231,8 +231,8 @@ export default function SimulationMap({
 
       // Dibujar agentes (encima de todo)
       agents.forEach((agent) => {
-        let x = agent.position_x
-        let z = agent.position_z
+        let x = agent.position_x ?? 0
+        let z = agent.position_z ?? 0
 
         // Si hay animación de movimiento, interpolar posición
         const moveAnimation = Array.from(activeAnimations.values()).find(
