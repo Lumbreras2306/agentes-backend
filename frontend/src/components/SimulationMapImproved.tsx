@@ -218,14 +218,16 @@ export default function SimulationMap({
           const xPos = offsetX + x * cellSize + cellSize / 2
           const zPos = offsetZ + z * cellSize + cellSize / 2
 
-          const radius = cellSize * 2 * progress
-          const alpha = 0.5 * (1 - progress)
+          const radius = Math.max(0, cellSize * 2 * progress) // Asegurar que el radio nunca sea negativo
+          const alpha = Math.max(0, Math.min(1, 0.5 * (1 - progress))) // Asegurar alpha entre 0 y 1
 
-          ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`
-          ctx.lineWidth = 3
-          ctx.beginPath()
-          ctx.arc(xPos, zPos, radius, 0, Math.PI * 2)
-          ctx.stroke()
+          if (radius > 0 && alpha > 0) {
+            ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`
+            ctx.lineWidth = 3
+            ctx.beginPath()
+            ctx.arc(xPos, zPos, radius, 0, Math.PI * 2)
+            ctx.stroke()
+          }
         }
 
         if (animation.type === 'fumigate' && animation.position) {
@@ -235,14 +237,16 @@ export default function SimulationMap({
           const zPos = offsetZ + z * cellSize + cellSize / 2
 
           for (let i = 0; i < 3; i++) {
-            const radius = cellSize * (0.3 + 0.3 * i + progress * 0.5)
-            const alpha = 0.4 * (1 - progress) * (1 - i * 0.3)
+            const radius = Math.max(0, cellSize * (0.3 + 0.3 * i + progress * 0.5)) // Asegurar radio positivo
+            const alpha = Math.max(0, Math.min(1, 0.4 * (1 - progress) * (1 - i * 0.3))) // Asegurar alpha entre 0 y 1
 
-            ctx.strokeStyle = `rgba(16, 185, 129, ${alpha})`
-            ctx.lineWidth = 2
-            ctx.beginPath()
-            ctx.arc(xPos, zPos, radius, 0, Math.PI * 2)
-            ctx.stroke()
+            if (radius > 0 && alpha > 0) {
+              ctx.strokeStyle = `rgba(16, 185, 129, ${alpha})`
+              ctx.lineWidth = 2
+              ctx.beginPath()
+              ctx.arc(xPos, zPos, radius, 0, Math.PI * 2)
+              ctx.stroke()
+            }
           }
         }
       })
@@ -268,20 +272,25 @@ export default function SimulationMap({
         const xPos = offsetX + x * cellSize + cellSize / 2
         const zPos = offsetZ + z * cellSize + cellSize / 2
 
+        // Asegurar que cellSize es válido antes de dibujar
+        if (cellSize <= 0) return
+
         const agentColor = agent.agent_type === 'fumigator' 
           ? getFumigatorColor(agent.agent_id, index) 
           : SCOUT_COLOR
 
+        const agentRadius = Math.max(1, cellSize * 0.35) // Asegurar radio mínimo de 1
+
         // Sombra del agente
         ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'
         ctx.beginPath()
-        ctx.arc(xPos + 2, zPos + 2, cellSize * 0.35, 0, Math.PI * 2)
+        ctx.arc(xPos + 2, zPos + 2, agentRadius, 0, Math.PI * 2)
         ctx.fill()
 
         // Cuerpo del agente
         ctx.fillStyle = agentColor
         ctx.beginPath()
-        ctx.arc(xPos, zPos, cellSize * 0.35, 0, Math.PI * 2)
+        ctx.arc(xPos, zPos, agentRadius, 0, Math.PI * 2)
         ctx.fill()
 
         // Borde del agente

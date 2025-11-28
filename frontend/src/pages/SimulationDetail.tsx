@@ -201,9 +201,9 @@ export default function SimulationDetail() {
     if (data.agents && Array.isArray(data.agents)) {
       const updatedAgents = data.agents
         .map((agentData: any) => {
-          // El WebSocket envía 'id' y 'type', no 'agent_id' y 'agent_type'
-          const agentId = agentData.id || agentData.agent_id
-          const agentType = agentData.type || agentData.agent_type
+          // El backend envía 'agent_id' y 'agent_type', pero también puede enviar 'id' y 'type'
+          const agentId = agentData.agent_id || agentData.id
+          const agentType = agentData.agent_type || agentData.type
           const existingAgent = agents.find(a => a.agent_id === agentId || a.id === agentId)
 
         // Create animation for movement
@@ -285,8 +285,18 @@ export default function SimulationDetail() {
         
         // Asegurar que tenemos posición válida
         if (!agentData.position || !Array.isArray(agentData.position) || agentData.position.length < 2) {
-          console.warn('Agent data missing position:', agentData)
-          return existingAgentData || null
+          console.warn('Agent data missing position:', { agentId, agentType, agentData })
+          // Si no hay posición pero hay un agente existente, mantenerlo
+          if (existingAgentData) {
+            return existingAgentData
+          }
+          return null
+        }
+        
+        // Si no hay agentId, no podemos procesar este agente
+        if (!agentId) {
+          console.warn('Agent data missing ID:', agentData)
+          return null
         }
         
         return {

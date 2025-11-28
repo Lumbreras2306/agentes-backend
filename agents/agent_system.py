@@ -44,7 +44,8 @@ class ScoutAgent(ap.Agent):
         
         # Referencias al mundo y blackboard
         self.world_instance = self.model.world_instance
-        self.blackboard = self.model.blackboard_service
+        # El modelo nuevo tiene self.model.blackboard, el legacy tiene self.model.blackboard_service
+        self.blackboard = getattr(self.model, 'blackboard', None) or self.model.blackboard_service
         self.grid = self.world_instance.grid
         self.infestation_grid = self.world_instance.infestation_grid
         self.width = self.world_instance.width
@@ -55,6 +56,21 @@ class ScoutAgent(ap.Agent):
         
         # Lista de campos ya analizados
         self.analyzed_fields = set()
+        
+        # IMPORTANTE: Registrar el agente en el knowledge_base para que aparezca en el frontend
+        # El modelo nuevo tiene model.blackboard.knowledge_base
+        if hasattr(self.model, 'blackboard') and hasattr(self.model.blackboard, 'knowledge_base'):
+            from agents.blackboard.knowledge_base import AgentState
+            agent_state = AgentState(
+                agent_id=str(self.id),
+                agent_type='scout',
+                position=self.position,
+                status=self.status,
+                fields_analyzed=self.fields_analyzed,
+                analyzed_positions=self.analyzed_fields
+            )
+            self.model.blackboard.knowledge_base.register_agent(agent_state)
+        # Si no hay nuevo blackboard, el modelo se encargará de registrar los agentes
     
     def step(self):
         """Ejecuta un paso del agente scout
@@ -66,7 +82,13 @@ class ScoutAgent(ap.Agent):
         4. REPORTAR: Actualizar estado en blackboard
         """
         # 1. PERCIBIR: Leer comando del blackboard
-        command = self.blackboard.get_shared(f'command_{self.id}')
+        # El nuevo blackboard tiene knowledge_base.get_shared, el legacy tiene métodos diferentes
+        if hasattr(self.blackboard, 'knowledge_base'):
+            command = self.blackboard.knowledge_base.get_shared(f'command_{self.id}')
+        elif hasattr(self.blackboard, 'get_shared'):
+            command = self.blackboard.get_shared(f'command_{self.id}')
+        else:
+            command = None
 
         if command and command.get('action') == 'explore_area':
             # ScoutCoordinatorKS nos envió una posición objetivo
@@ -83,7 +105,10 @@ class ScoutAgent(ap.Agent):
                     self.status = 'scouting'
 
                     # Limpiar comando procesado
-                    self.blackboard.set_shared(f'command_{self.id}', None)
+                    if hasattr(self.blackboard, 'knowledge_base'):
+                        self.blackboard.knowledge_base.set_shared(f'command_{self.id}', None)
+                    elif hasattr(self.blackboard, 'set_shared'):
+                        self.blackboard.set_shared(f'command_{self.id}', None)
             else:
                 # Comando sin objetivo, explorar por cuenta propia
                 self._explore()
@@ -102,6 +127,19 @@ class ScoutAgent(ap.Agent):
             else:
                 # Explorar aleatoriamente
                 self._explore()
+        
+        # 4. REPORTAR: Siempre actualizar estado en blackboard al final del step
+        # Esto asegura que el frontend reciba la posición actualizada
+        # Intentar acceder al nuevo blackboard primero
+        if hasattr(self.model, 'blackboard') and hasattr(self.model.blackboard, 'knowledge_base'):
+            self.model.blackboard.knowledge_base.update_agent(
+                str(self.id),
+                position=self.position,
+                status=self.status,
+                fields_analyzed=self.fields_analyzed,
+                analyzed_positions=self.analyzed_fields
+            )
+        # Si no hay nuevo blackboard, el modelo se encargará de actualizar
     
     def _find_unanalyzed_field(self) -> Optional[Tuple[int, int]]:
         """Encuentra un campo no analizado usando exploración sistemática
@@ -197,6 +235,18 @@ class ScoutAgent(ap.Agent):
                 # Modo sin confirmaciones (fallback)
                 self.position = next_pos
                 self._reveal_infestation_around_position(next_pos)
+            
+            # IMPORTANTE: Actualizar estado en el knowledge_base para que aparezca en el frontend
+            # Intentar acceder al nuevo blackboard primero
+            if hasattr(self.model, 'blackboard') and hasattr(self.model.blackboard, 'knowledge_base'):
+                self.model.blackboard.knowledge_base.update_agent(
+                    str(self.id),
+                    position=self.position,
+                    status=self.status,
+                    fields_analyzed=self.fields_analyzed,
+                    analyzed_positions=self.analyzed_fields
+                )
+            # Si no hay nuevo blackboard, el modelo se encargará de actualizar
     
     def _reveal_infestation_around_position(self, pos: Tuple[int, int]):
         """Revela infestación en un área 3x3 alrededor de la posición actual
@@ -261,11 +311,15 @@ class ScoutAgent(ap.Agent):
         # Actualizar blackboard una sola vez después de procesar todas las celdas
         # El ScoutCoordinatorKS necesita esta información para coordinar la exploración
         if newly_analyzed:
-            self.blackboard.update_agent(
-                str(self.id),
-                analyzed_positions=self.analyzed_fields,
-                fields_analyzed=self.fields_analyzed
-            )
+            # Actualizar estado en el knowledge_base
+            if hasattr(self.model, 'blackboard') and hasattr(self.model.blackboard, 'knowledge_base'):
+                self.model.blackboard.knowledge_base.update_agent(
+                    str(self.id),
+                    analyzed_positions=self.analyzed_fields,
+                    fields_analyzed=self.fields_analyzed,
+                    position=self.position,
+                    status=self.status
+                )
     
     def _analyze_field(self, field_pos: Tuple[int, int]):
         """Analiza un campo para descubrir su nivel de infestación (legacy, ahora usa _reveal_infestation_around_position)"""

@@ -112,7 +112,7 @@ class ScoutCoordinatorKS(KnowledgeSource):
         width = self.kb.world_state.width
         height = self.kb.world_state.height
         grid = self.kb.world_state.grid
-        scout_pos = (scout.position_x, scout.position_z)
+        scout_pos = scout.position  # AgentState.position es una tupla (x, z)
 
         # Find all unanalyzed fields
         unanalyzed_fields = []
