@@ -33,6 +33,9 @@ class ScoutCoordinatorKS(KnowledgeSource):
         # Track globally analyzed positions
         self.analyzed_positions: Set[Tuple[int, int]] = set()
 
+        # Track if exploration is complete
+        self.exploration_complete = False
+
     def check_preconditions(self) -> bool:
         """Check if there are idle scouts"""
         scouts = self.kb.get_agents_by_type('scout')
@@ -47,6 +50,20 @@ class ScoutCoordinatorKS(KnowledgeSource):
         # Update global analyzed positions
         for scout in scouts:
             self.analyzed_positions.update(scout.analyzed_positions)
+
+        # Check if exploration is complete
+        coverage = self.get_coverage_percentage()
+
+        if coverage >= 99.0 and not self.exploration_complete:
+            # Exploration complete! Emit event
+            self.exploration_complete = True
+            self.kb.emit_event(EventType.SCOUT_EXPLORATION_COMPLETE, {
+                'coverage': coverage,
+                'total_fields_analyzed': len(self.analyzed_positions)
+            })
+
+            print(f"🎯 Scout exploration complete! Coverage: {coverage:.1f}%")
+            return
 
         # Direct each idle scout
         for scout in scouts:
@@ -64,6 +81,15 @@ class ScoutCoordinatorKS(KnowledgeSource):
                         scout.agent_id,
                         status='scouting'
                     )
+                elif not self.exploration_complete:
+                    # No more targets but not 99% yet, check coverage
+                    if coverage >= 99.0:
+                        self.exploration_complete = True
+                        self.kb.emit_event(EventType.SCOUT_EXPLORATION_COMPLETE, {
+                            'coverage': coverage,
+                            'total_fields_analyzed': len(self.analyzed_positions)
+                        })
+                        print(f"🎯 Scout exploration complete! Coverage: {coverage:.1f}%")
 
     def _find_exploration_target(self, scout: AgentState) -> Optional[Tuple[int, int]]:
         """

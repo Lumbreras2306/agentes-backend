@@ -35,12 +35,23 @@ class TaskAllocatorKS(KnowledgeSource):
         self.triggers = {
             EventType.TASK_CREATED,
             EventType.AGENT_IDLE,
-            EventType.TASK_COMPLETED
+            EventType.TASK_COMPLETED,
+            EventType.SCOUT_EXPLORATION_COMPLETE  # Start assigning after scout finishes
         }
         self.always_run = True  # Run every cycle to check for assignments
 
     def check_preconditions(self) -> bool:
         """Check if there are tasks to assign and idle agents"""
+        # IMPORTANT: Don't assign tasks until scout completes exploration
+        scout_complete_events = self.kb.get_recent_events(
+            EventType.SCOUT_EXPLORATION_COMPLETE,
+            limit=1
+        )
+
+        if not scout_complete_events:
+            # Scout hasn't finished yet, don't assign tasks
+            return False
+
         idle_fumigators = self.kb.get_idle_agents('fumigator')
         pending_tasks = self.kb.get_pending_tasks()
 

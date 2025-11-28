@@ -26,6 +26,7 @@ class EventType(Enum):
     AGENT_REFILLED = "agent_refilled"
     CONFLICT_DETECTED = "conflict_detected"
     PATH_CALCULATED = "path_calculated"
+    SCOUT_EXPLORATION_COMPLETE = "scout_exploration_complete"
 
 
 @dataclass
