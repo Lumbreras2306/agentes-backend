@@ -96,11 +96,11 @@ class ScoutCoordinatorKS(KnowledgeSource):
         Find the next exploration target for a scout.
 
         Strategy:
-        - Systematic lawnmower/sweep pattern
-        - Start at top-left, sweep horizontally left-to-right
-        - Move down row by row
-        - Scout goes from (0,0) → (width,0) → (0,1) → (width,1) → ...
-        - This creates predictable, non-erratic movement
+        - Zigzag/Boustrophedon pattern for maximum efficiency
+        - Even rows (0, 2, 4...): sweep left-to-right
+        - Odd rows (1, 3, 5...): sweep right-to-left
+        - Pattern: (0,0)→(width,0) then (width,1)→(0,1) then (0,2)→(width,2)...
+        - This minimizes backtracking and creates the most efficient path
 
         Args:
             scout: The scout agent
@@ -114,10 +114,17 @@ class ScoutCoordinatorKS(KnowledgeSource):
         height = self.kb.world_state.height
         grid = self.kb.world_state.grid
 
-        # Systematic sweep: top-to-bottom, left-to-right
-        # This ensures the scout moves predictably across the entire map
+        # Zigzag sweep: alternating direction per row
         for z in range(height):
-            for x in range(width):
+            # Determine scan direction based on row number
+            if z % 2 == 0:
+                # Even rows: left to right (0 → width-1)
+                x_range = range(width)
+            else:
+                # Odd rows: right to left (width-1 → 0)
+                x_range = range(width - 1, -1, -1)
+
+            for x in x_range:
                 pos = (x, z)
 
                 # Check if this position needs to be analyzed
