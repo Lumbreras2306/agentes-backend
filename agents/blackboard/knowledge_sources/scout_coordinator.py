@@ -115,13 +115,15 @@ class ScoutCoordinatorKS(KnowledgeSource):
         grid = self.kb.world_state.grid
 
         # Zigzag sweep: alternating direction per row
-        for z in range(height):
-            # Determine scan direction based on row number
-            if z % 2 == 0:
-                # Even rows: left to right (0 → width-1)
+        # Skip every other row (step=2) because scout reveals 3x3 area
+        # Row 0 reveals rows [-1, 0, 1], Row 2 reveals [1, 2, 3], etc.
+        for idx, z in enumerate(range(0, height, 2)):
+            # Determine scan direction based on iteration number
+            if idx % 2 == 0:
+                # Even iterations: left to right (0 → width-1)
                 x_range = range(width)
             else:
-                # Odd rows: right to left (width-1 → 0)
+                # Odd iterations: right to left (width-1 → 0)
                 x_range = range(width - 1, -1, -1)
 
             for x in x_range:
