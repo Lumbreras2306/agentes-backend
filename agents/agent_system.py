@@ -586,23 +586,34 @@ class FumigatorAgent(ap.Agent):
             if self.grid[z][x] == TileType.FIELD:
                 # Aumentar peso exponencialmente cada vez que se pisa
                 current_weight = self.field_weights.get(next_pos, 0.0)
-                
+
                 if current_weight == 0.0:
                     self.field_weights[next_pos] = 5.0
                 else:
                     exponential_factor = 1.8
                     self.field_weights[next_pos] = current_weight * exponential_factor
-                
-                # Verificar si necesita fumigar la celda (mientras se mueve)
-                if self.infestation_grid[z][x] > 0 and self.pesticide_level > 0:
-                    should_fumigate = True
-                    infestation_level = self.infestation_grid[z][x]
-                    pesticide_needed = min(infestation_level, self.pesticide_level)
-                    fumigation_data = {
-                        'infestation_level': infestation_level,
-                        'pesticide_needed': pesticide_needed,
-                        'position': [x, z]
-                    }
+
+                # FUMIGACIÓN OPORTUNISTA: Fumigar celdas con tareas en el camino
+                # Solo fumigar si:
+                # 1. Tiene pesticida disponible
+                # 2. La celda tiene una tarea asignada o pendiente en el blackboard
+                # 3. La celda tiene infestación > 0
+                if self.pesticide_level > 0:
+                    # Verificar si hay una tarea para esta posición
+                    task_at_position = self.blackboard.get_task_by_position(x, z)
+
+                    if task_at_position and self.infestation_grid[z][x] > 0:
+                        # Hay una tarea pendiente o asignada aquí, ¡fumigar!
+                        should_fumigate = True
+                        infestation_level = self.infestation_grid[z][x]
+                        pesticide_needed = min(infestation_level, self.pesticide_level)
+                        fumigation_data = {
+                            'infestation_level': infestation_level,
+                            'pesticide_needed': pesticide_needed,
+                            'position': [x, z],
+                            'task_id': task_at_position.id if task_at_position else None,
+                            'opportunistic': True  # Marcador de fumigación oportunista
+                        }
             
             # Si hay confirmaciones habilitadas, enviar comando y esperar
             if wait_confirmation and hasattr(self.model, 'simulation_id') and self.model.simulation_id:
@@ -636,21 +647,26 @@ class FumigatorAgent(ap.Agent):
         """Ejecuta el movimiento y fumigación si es necesario"""
         x, z = next_pos
         self.position = next_pos
-        
+
         # Ejecutar fumigación si es necesario
         if fumigation_data:
             infestation_level = fumigation_data['infestation_level']
             pesticide_needed = fumigation_data['pesticide_needed']
-            
+            is_opportunistic = fumigation_data.get('opportunistic', False)
+
             self.pesticide_level -= pesticide_needed
             self.infestation_grid[z][x] = max(0, infestation_level - pesticide_needed)
-            
+
             # Si se completó la fumigación de esta celda, crear/completar tarea si existe
             if self.infestation_grid[z][x] == 0:
                 task = self.blackboard.get_task_by_position(x, z)
                 if task:
                     self.blackboard.complete_task(task)
                     self.fields_fumigated += 1
+
+                    # Log de fumigación oportunista para debugging
+                    if is_opportunistic:
+                        print(f"🎯 Fumigator {self.id}: Fumigación oportunista en ({x}, {z}) - Tarea {task.id} completada")
     
     def _complete_task(self):
         """Completa la tarea actual y consume pesticida"""
