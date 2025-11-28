@@ -31,6 +31,9 @@ class ScoutAgent(BaseAgent):
 
         self.agent_type = 'scout'
         self.analyzed_positions = set()
+        # Estado para el patrón de barrido: dirección actual y fila actual
+        self.sweep_direction = 1  # 1 = izquierda a derecha, -1 = derecha a izquierda
+        self.current_row = 0  # Fila actual en el barrido
 
         # Register with blackboard
         from ..blackboard.knowledge_base import AgentState
@@ -207,51 +210,56 @@ class ScoutAgent(BaseAgent):
     def _sweep_pattern(self):
         """
         Patrón de barrido sistemático: va a la esquina superior izquierda (0,0)
-        y barre el mapa fila por fila de izquierda a derecha.
+        y barre el mapa fila por fila de izquierda a derecha, saltando una fila entre barridos.
         
         Estrategia:
-        1. Si no está en (0,0), moverse hacia allí
-        2. Una vez en (0,0), comenzar barrido fila por fila
-        3. En cada posición, escanear el área (solo revela si es FIELD)
-        4. Moverse a la siguiente celda en el patrón de barrido
+        1. Si no está en la fila inicial, moverse hacia allí
+        2. Barre de izquierda a derecha en la fila actual
+        3. Al terminar la fila, baja 2 filas (salta una fila) y empieza desde x=0
+        4. Repite el proceso hasta cubrir todo el mapa
         """
         kb = self.blackboard.knowledge_base
         x, z = self.position
         width = kb.world_state.width
         height = kb.world_state.height
         
-        # Si no está en la esquina superior izquierda, moverse hacia allí
-        if x != 0 or z != 0:
-            # Moverse hacia (0, 0)
-            if x > 0:
-                # Moverse hacia la izquierda
-                self.position = (x - 1, z)
-            elif z > 0:
+        # Inicializar estado si es necesario
+        if not hasattr(self, 'current_row'):
+            self.current_row = 0
+        
+        # Si no está en la fila actual del barrido, moverse hacia allí
+        if z != self.current_row:
+            # Moverse hacia la fila correcta
+            if z < self.current_row:
                 # Moverse hacia arriba
-                self.position = (x, z - 1)
+                self.position = (x, z + 1)
             else:
-                # Ya está en (0, 0) o muy cerca
-                self.position = (0, 0)
+                # Moverse hacia abajo
+                self.position = (x, z - 1)
             
             self.status = 'scouting'
             # Escanear área en la nueva posición
             self._scan_area()
             return
         
-        # Ya está en (0, 0) o cerca - comenzar barrido sistemático
-        # Calcular siguiente posición en el patrón de barrido
-        next_x = x + 1
-        
-        if next_x >= width:
-            # Fin de fila, pasar a la siguiente fila
-            next_x = 0
-            next_z = z + 1
+        # Estamos en la fila correcta
+        # Verificar si estamos al final de la fila (última columna)
+        if x >= width - 1:
+            # Fin de fila, bajar 2 filas (saltar una fila) y empezar desde x=0
+            next_z = z + 2
             
             if next_z >= height:
                 # Fin del mapa, volver al inicio
+                self.current_row = 0
                 next_x = 0
                 next_z = 0
+            else:
+                # Pasar a la siguiente fila del barrido (saltando una)
+                self.current_row = next_z
+                next_x = 0  # Empezar desde la izquierda
         else:
+            # Continuar barrido de izquierda a derecha en la misma fila
+            next_x = x + 1
             next_z = z
         
         # Moverse a la siguiente posición
