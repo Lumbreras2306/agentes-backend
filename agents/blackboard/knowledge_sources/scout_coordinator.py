@@ -67,7 +67,9 @@ class ScoutCoordinatorKS(KnowledgeSource):
 
         # Direct each idle scout
         for scout in scouts:
-            if scout.status in ['idle', 'scouting']:
+            # Only send new commands when scout is truly idle
+            # This prevents sending conflicting commands while scout is moving
+            if scout.status == 'idle':
                 target = self._find_exploration_target(scout)
 
                 if target:
@@ -85,6 +87,8 @@ class ScoutCoordinatorKS(KnowledgeSource):
                         scout.agent_id,
                         status='scouting'
                     )
+
+                    print(f"🔍 Scout {scout.agent_id}: Moviendo a posición {target} en patrón zigzag")
                 elif not self.exploration_complete:
                     # No more targets but not 99% yet, check coverage
                     if coverage >= 99.0:
@@ -101,10 +105,9 @@ class ScoutCoordinatorKS(KnowledgeSource):
 
         Strategy:
         - Simple zigzag pattern through ALL positions (not just fields)
-        - Row 0: left-to-right (0,0) → (width-1, 0)
-        - Row 2: right-to-left (width-1, 2) → (0, 2)
-        - Row 4: left-to-right (0,4) → (width-1, 4)
-        - Scout reveals 3x3 around each position, covering all fields naturally
+        - Returns the FIRST unvisited position in zigzag order
+        - Pattern: (0,0)→...→(width-1,0) then (width-1,2)→...→(0,2) then (0,4)→...
+        - Scout follows strict sequence creating clean zigzag path
 
         Args:
             scout: The scout agent
@@ -118,29 +121,31 @@ class ScoutCoordinatorKS(KnowledgeSource):
         height = self.kb.world_state.height
         grid = self.kb.world_state.grid
 
-        # Simple zigzag through ALL positions in order
-        # Don't filter by field type - just follow the pattern
+        # Generate zigzag positions in strict order
+        # Row 0: (0,0), (1,0), (2,0), ..., (width-1, 0)
+        # Row 2: (width-1, 2), (width-2, 2), ..., (0, 2)
+        # Row 4: (0,4), (1,4), ..., (width-1, 4)
+        # etc.
+
         for idx, z in enumerate(range(0, height, 2)):
-            # Alternate direction based on iteration
+            # Determine direction for this row
             if idx % 2 == 0:
                 # Even iterations: left → right
-                x_range = range(width)
+                x_positions = range(width)
             else:
                 # Odd iterations: right → left
-                x_range = range(width - 1, -1, -1)
+                x_positions = range(width - 1, -1, -1)
 
-            for x in x_range:
+            # Check each position in this row
+            for x in x_positions:
                 pos = (x, z)
 
-                # Check if we've already visited this position
+                # If not yet visited and not impassable
                 if pos not in self.analyzed_positions:
-                    # Return this position regardless of cell type
-                    # The 3x3 revelation will cover fields naturally
-                    # Only skip if it's truly impassable
                     if grid[z][x] != TileType.IMPASSABLE:
                         return pos
 
-        # Sweep complete
+        # All positions in zigzag pattern visited
         return None
 
     def _find_nearest_navigable(self, x: int, z: int) -> Tuple[int, int]:
