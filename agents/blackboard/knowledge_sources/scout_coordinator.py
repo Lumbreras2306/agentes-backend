@@ -77,6 +77,10 @@ class ScoutCoordinatorKS(KnowledgeSource):
                         'target_position': target,
                     })
 
+                    # Mark target position as analyzed immediately
+                    # This prevents sending the scout to the same position twice
+                    self.analyzed_positions.add(target)
+
                     self.kb.update_agent(
                         scout.agent_id,
                         status='scouting'
@@ -96,17 +100,17 @@ class ScoutCoordinatorKS(KnowledgeSource):
         Find the next exploration target for a scout.
 
         Strategy:
-        - Zigzag/Boustrophedon pattern for maximum efficiency
-        - Even rows (0, 2, 4...): sweep left-to-right
-        - Odd rows (1, 3, 5...): sweep right-to-left
-        - Pattern: (0,0)→(width,0) then (width,1)→(0,1) then (0,2)→(width,2)...
-        - This minimizes backtracking and creates the most efficient path
+        - Simple zigzag pattern through ALL positions (not just fields)
+        - Row 0: left-to-right (0,0) → (width-1, 0)
+        - Row 2: right-to-left (width-1, 2) → (0, 2)
+        - Row 4: left-to-right (0,4) → (width-1, 4)
+        - Scout reveals 3x3 around each position, covering all fields naturally
 
         Args:
             scout: The scout agent
 
         Returns:
-            Target position or None if all explored
+            Target position or None if sweep complete
         """
         from world.world_generator import TileType
 
@@ -114,33 +118,29 @@ class ScoutCoordinatorKS(KnowledgeSource):
         height = self.kb.world_state.height
         grid = self.kb.world_state.grid
 
-        # Zigzag sweep: alternating direction per row
-        # Skip every other row (step=2) because scout reveals 3x3 area
-        # Row 0 reveals rows [-1, 0, 1], Row 2 reveals [1, 2, 3], etc.
+        # Simple zigzag through ALL positions in order
+        # Don't filter by field type - just follow the pattern
         for idx, z in enumerate(range(0, height, 2)):
-            # Determine scan direction based on iteration number
+            # Alternate direction based on iteration
             if idx % 2 == 0:
-                # Even iterations: left to right (0 → width-1)
+                # Even iterations: left → right
                 x_range = range(width)
             else:
-                # Odd iterations: right to left (width-1 → 0)
+                # Odd iterations: right → left
                 x_range = range(width - 1, -1, -1)
 
             for x in x_range:
                 pos = (x, z)
 
-                # Check if this position needs to be analyzed
-                # We only care about FIELD positions
-                if grid[z][x] == TileType.FIELD:
-                    if pos not in self.analyzed_positions:
-                        # Found an unanalyzed field in sweep order
-                        # Return navigable position to reach it
-                        if grid[z][x] != TileType.IMPASSABLE:
-                            return pos
-                        else:
-                            return self._find_nearest_navigable(x, z)
+                # Check if we've already visited this position
+                if pos not in self.analyzed_positions:
+                    # Return this position regardless of cell type
+                    # The 3x3 revelation will cover fields naturally
+                    # Only skip if it's truly impassable
+                    if grid[z][x] != TileType.IMPASSABLE:
+                        return pos
 
-        # All fields analyzed
+        # Sweep complete
         return None
 
     def _find_nearest_navigable(self, x: int, z: int) -> Tuple[int, int]:
