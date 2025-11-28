@@ -96,9 +96,10 @@ class ScoutCoordinatorKS(KnowledgeSource):
         Find the next exploration target for a scout.
 
         Strategy:
-        - Use systematic strip scanning
-        - Move in rows with spacing of 3 (to scan 3 rows at once)
-        - Start from top-left, move right, then down
+        - Use simple nearest-unanalyzed approach
+        - Scout reveals 3x3 area around its position
+        - Always go to the closest unanalyzed field
+        - This creates smooth, efficient exploration
 
         Args:
             scout: The scout agent
@@ -111,39 +112,33 @@ class ScoutCoordinatorKS(KnowledgeSource):
         width = self.kb.world_state.width
         height = self.kb.world_state.height
         grid = self.kb.world_state.grid
+        scout_pos = (scout.position_x, scout.position_z)
 
-        # Find unanalyzed fields in a systematic pattern
-        # Scan in strips of 3 rows (scout scans current row ± 1)
-        for z in range(1, height - 1, 3):  # Skip edges, step by 3
-            for x in range(width):
-                # Check if this strip has unanalyzed fields
-                strip_analyzed = True
-                for dz in [-1, 0, 1]:
-                    check_z = z + dz
-                    if 0 <= check_z < height:
-                        if grid[check_z][x] == TileType.FIELD:
-                            if (x, check_z) not in self.analyzed_positions:
-                                strip_analyzed = False
-                                break
-
-                if not strip_analyzed:
-                    # This strip has unanalyzed fields
-                    # Find a safe position in the strip to navigate to
-                    for test_x in range(x, width):
-                        if grid[z][test_x] != TileType.IMPASSABLE:
-                            return (test_x, z)
-
-        # If systematic scan complete, look for any unanalyzed field
+        # Find all unanalyzed fields
+        unanalyzed_fields = []
         for z in range(height):
             for x in range(width):
                 if grid[z][x] == TileType.FIELD:
                     if (x, z) not in self.analyzed_positions:
-                        # Found unanalyzed field
-                        # Return a position near it that's navigable
-                        return self._find_nearest_navigable(x, z)
+                        unanalyzed_fields.append((x, z))
 
-        # All fields analyzed
-        return None
+        if not unanalyzed_fields:
+            # All fields analyzed
+            return None
+
+        # Find the closest unanalyzed field to the scout
+        def manhattan_distance(pos1, pos2):
+            return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
+        # Sort by distance and get the closest one
+        closest_field = min(unanalyzed_fields, key=lambda p: manhattan_distance(scout_pos, p))
+
+        # Return the closest field position
+        # If it's navigable, return it directly; otherwise find nearest navigable
+        if grid[closest_field[1]][closest_field[0]] != TileType.IMPASSABLE:
+            return closest_field
+        else:
+            return self._find_nearest_navigable(closest_field[0], closest_field[1])
 
     def _find_nearest_navigable(self, x: int, z: int) -> Tuple[int, int]:
         """Find nearest navigable position to (x, z)"""

@@ -57,20 +57,51 @@ class ScoutAgent(ap.Agent):
         self.analyzed_fields = set()
     
     def step(self):
-        """Ejecuta un paso del agente scout"""
-        # Buscar campos cercanos no analizados
-        target_field = self._find_unanalyzed_field()
-        
-        if target_field:
-            # Moverse hacia el campo
-            if self.position != target_field:
-                self._move_towards(target_field)
+        """Ejecuta un paso del agente scout
+
+        Reactive Agent Pattern:
+        1. PERCIBIR: Leer comandos del blackboard (ScoutCoordinatorKS)
+        2. DECIDIR: Determinar acción basada en comando o estado interno
+        3. ACTUAR: Ejecutar movimiento y revelar infestación
+        4. REPORTAR: Actualizar estado en blackboard
+        """
+        # 1. PERCIBIR: Leer comando del blackboard
+        command = self.blackboard.get_shared(f'command_{self.id}')
+
+        if command and command.get('action') == 'explore_area':
+            # ScoutCoordinatorKS nos envió una posición objetivo
+            target = command.get('target_position')
+
+            if target:
+                # Moverse hacia el objetivo
+                if self.position != target:
+                    self._move_towards(target)
+                    self.status = 'scouting'
+                else:
+                    # Llegamos al objetivo, revelar área
+                    self._reveal_infestation_around_position(self.position)
+                    self.status = 'scouting'
+
+                    # Limpiar comando procesado
+                    self.blackboard.set_shared(f'command_{self.id}', None)
             else:
-                # Analizar el campo
-                self._analyze_field(target_field)
+                # Comando sin objetivo, explorar por cuenta propia
+                self._explore()
         else:
-            # Explorar aleatoriamente
-            self._explore()
+            # No hay comando del blackboard, usar lógica interna
+            # (Fallback para compatibilidad, pero el ScoutCoordinatorKS debería dirigir)
+            target_field = self._find_unanalyzed_field()
+
+            if target_field:
+                # Moverse hacia el campo
+                if self.position != target_field:
+                    self._move_towards(target_field)
+                else:
+                    # Analizar el campo
+                    self._analyze_field(target_field)
+            else:
+                # Explorar aleatoriamente
+                self._explore()
     
     def _find_unanalyzed_field(self) -> Optional[Tuple[int, int]]:
         """Encuentra un campo no analizado usando exploración sistemática
@@ -168,49 +199,73 @@ class ScoutAgent(ap.Agent):
                 self._reveal_infestation_around_position(next_pos)
     
     def _reveal_infestation_around_position(self, pos: Tuple[int, int]):
-        """Revela infestación en la posición actual y las filas arriba y abajo (3 filas total)"""
+        """Revela infestación en un área 3x3 alrededor de la posición actual
+
+        Solo revela células en un radio pequeño para simular el escaneo del dron.
+        Esto permite una revelación progresiva del mapa.
+        """
         x, z = pos
-        
-        # Analizar la fila actual y una arriba y una abajo
-        for dz in [-1, 0, 1]:
-            analyze_z = z + dz
-            if 0 <= analyze_z < self.height:
-                # Analizar toda la fila
-                for analyze_x in range(self.width):
-                    field_pos = (analyze_x, analyze_z)
-                    
-                    # Solo analizar campos (no caminos ni granero)
-                    if self.grid[analyze_z][analyze_x] != TileType.FIELD:
-                        continue
-                    
-                    # Si ya fue analizado, saltar
-                    if field_pos in self.analyzed_fields:
-                        continue
-                    
-                    # Marcar como analizado
-                    self.analyzed_fields.add(field_pos)
-                    self.fields_analyzed += 1
-                    
-                    # Obtener nivel de infestación
-                    infestation = self.infestation_grid[analyze_z][analyze_x]
-                    
-                    # Si hay infestación significativa, crear tarea en el blackboard
-                    if infestation >= self.model.min_infestation:
-                        # Verificar si ya existe una tarea para este campo
-                        existing_task = self.blackboard.get_task_by_position(analyze_x, analyze_z)
-                        
-                        if not existing_task:
-                            # Crear nueva tarea
-                            self.blackboard.create_task(
-                                position_x=analyze_x,
-                                position_z=analyze_z,
-                                infestation_level=infestation,
-                                metadata={
-                                    'crop_type': self.world_instance.crop_grid[analyze_z][analyze_x],
-                                    'discovered_by': str(self.id)
-                                }
-                            )
-                            self.discoveries += 1
+
+        # Radio de revelación (1 = área 3x3, 2 = área 5x5)
+        reveal_radius = 1
+
+        # Track if we analyzed any new cells
+        newly_analyzed = False
+
+        # Analizar celdas en el radio especificado
+        for dz in range(-reveal_radius, reveal_radius + 1):
+            for dx in range(-reveal_radius, reveal_radius + 1):
+                analyze_x = x + dx
+                analyze_z = z + dz
+
+                # Verificar límites
+                if not (0 <= analyze_x < self.width and 0 <= analyze_z < self.height):
+                    continue
+
+                field_pos = (analyze_x, analyze_z)
+
+                # Solo analizar campos (no caminos ni granero)
+                if self.grid[analyze_z][analyze_x] != TileType.FIELD:
+                    continue
+
+                # Si ya fue analizado, saltar
+                if field_pos in self.analyzed_fields:
+                    continue
+
+                # Marcar como analizado
+                self.analyzed_fields.add(field_pos)
+                self.fields_analyzed += 1
+                newly_analyzed = True
+
+                # Obtener nivel de infestación
+                infestation = self.infestation_grid[analyze_z][analyze_x]
+
+                # Si hay infestación significativa, crear tarea en el blackboard
+                if infestation >= self.model.min_infestation:
+                    # Verificar si ya existe una tarea para este campo
+                    existing_task = self.blackboard.get_task_by_position(analyze_x, analyze_z)
+
+                    if not existing_task:
+                        # Crear nueva tarea
+                        self.blackboard.create_task(
+                            position_x=analyze_x,
+                            position_z=analyze_z,
+                            infestation_level=infestation,
+                            metadata={
+                                'crop_type': self.world_instance.crop_grid[analyze_z][analyze_x],
+                                'discovered_by': str(self.id)
+                            }
+                        )
+                        self.discoveries += 1
+
+        # Actualizar blackboard una sola vez después de procesar todas las celdas
+        # El ScoutCoordinatorKS necesita esta información para coordinar la exploración
+        if newly_analyzed:
+            self.blackboard.update_agent(
+                str(self.id),
+                analyzed_positions=self.analyzed_fields,
+                fields_analyzed=self.fields_analyzed
+            )
     
     def _analyze_field(self, field_pos: Tuple[int, int]):
         """Analiza un campo para descubrir su nivel de infestación (legacy, ahora usa _reveal_infestation_around_position)"""
