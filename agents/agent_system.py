@@ -73,39 +73,70 @@ class ScoutAgent(ap.Agent):
             self._explore()
     
     def _find_unanalyzed_field(self) -> Optional[Tuple[int, int]]:
-        """Encuentra un campo cercano no analizado"""
-        # Buscar campos en un radio creciente
-        for radius in range(1, min(self.width, self.height)):
-            candidates = []
-            for dx in range(-radius, radius + 1):
-                for dz in range(-radius, radius + 1):
-                    if abs(dx) + abs(dz) == radius:  # Solo borde del radio
-                        x = self.position[0] + dx
-                        z = self.position[1] + dz
-                        pos = (x, z)
-                        
-                        if (self._is_valid_position(pos) and 
-                            self.grid[z][x] == TileType.FIELD and
-                            pos not in self.analyzed_fields):
-                            candidates.append(pos)
-            
-            if candidates:
-                # Elegir el más cercano
-                return min(candidates, key=lambda p: self._calculate_distance(self.position, p))
+        """Encuentra un campo no analizado usando exploración sistemática
         
-        return None
+        Estrategia: Escanear todos los campos de manera sistemática,
+        fila por fila, sin evitar zonas. Esto evita el comportamiento
+        errático de buscar en radios crecientes.
+        """
+        # Buscar todos los campos no analizados
+        unanalyzed_fields = []
+        for z in range(self.height):
+            for x in range(self.width):
+                if (self.grid[z][x] == TileType.FIELD and 
+                    (x, z) not in self.analyzed_fields):
+                    unanalyzed_fields.append((x, z))
+        
+        if not unanalyzed_fields:
+            return None
+        
+        # Estrategia: Ir al campo más cercano que no haya sido analizado
+        # Esto asegura una exploración más sistemática
+        return min(unanalyzed_fields, key=lambda p: self._calculate_distance(self.position, p))
     
     def _move_towards(self, target: Tuple[int, int], wait_confirmation: bool = True):
-        """Se mueve hacia el objetivo usando pathfinding y revela infestación al pasar"""
+        """Se mueve hacia el objetivo usando pathfinding o movimiento directo
+        
+        Si el objetivo es un campo y está cerca, puede moverse directamente.
+        Si no, usa pathfinding para evitar zonas IMPASSABLE.
+        """
         self.status = 'moving'
         
-        # Usar pathfinding (el scout puede usar cualquier ruta, no le importa el peso)
-        path = self.pathfinder.dijkstra(self.position, target, prefer_roads=False)
-        
-        if path and len(path) > 1:
-            # Moverse al siguiente paso del camino
-            next_pos = path[1]
+        # Si el objetivo es un campo y está a distancia Manhattan 1, moverse directamente
+        distance = self._calculate_distance(self.position, target)
+        if distance == 1 and self.grid[target[1]][target[0]] == TileType.FIELD:
+            # Movimiento directo a campo adyacente
+            next_pos = target
+        else:
+            # Usar pathfinding para distancias mayores
+            path = self.pathfinder.dijkstra(self.position, target, prefer_roads=False)
             
+            if path and len(path) > 1:
+                next_pos = path[1]
+            elif path and len(path) == 1:
+                # Ya estamos en el objetivo
+                next_pos = self.position
+            else:
+                # Pathfinding falló, intentar movimiento directo hacia el objetivo
+                # Solo si es un campo y está cerca (distancia <= 2)
+                if distance <= 2 and self.grid[target[1]][target[0]] == TileType.FIELD:
+                    # Moverse un paso más cerca usando movimiento Manhattan simple
+                    x, z = self.position
+                    tx, tz = target
+                    if abs(tx - x) > abs(tz - z):
+                        # Mover horizontalmente
+                        new_x = x + (1 if tx > x else -1)
+                        next_pos = (new_x, z) if self._is_valid_position((new_x, z)) else self.position
+                    else:
+                        # Mover verticalmente
+                        new_z = z + (1 if tz > z else -1)
+                        next_pos = (x, new_z) if self._is_valid_position((x, new_z)) else self.position
+                else:
+                    # No se puede mover, quedarse en posición actual
+                    next_pos = self.position
+        
+        # Solo moverse si la posición es diferente
+        if next_pos != self.position:
             # Si hay confirmaciones habilitadas, enviar comando y esperar
             if wait_confirmation and hasattr(self.model, 'simulation_id'):
                 command = {
@@ -187,8 +218,8 @@ class ScoutAgent(ap.Agent):
         self.status = 'scouting'
     
     def _explore(self):
-        """Explora el mundo cuando no hay campos cercanos"""
-        # Moverse aleatoriamente hacia campos no analizados
+        """Explora el mundo de manera sistemática"""
+        # Buscar todos los campos no analizados
         unanalyzed = []
         for z in range(self.height):
             for x in range(self.width):
@@ -197,8 +228,8 @@ class ScoutAgent(ap.Agent):
                     unanalyzed.append((x, z))
         
         if unanalyzed:
-            # Elegir uno aleatorio
-            target = self.random.choice(unanalyzed)
+            # Ir al más cercano en lugar de aleatorio para exploración sistemática
+            target = min(unanalyzed, key=lambda p: self._calculate_distance(self.position, p))
             self._move_towards(target)
         else:
             # Todos los campos analizados, moverse aleatoriamente
@@ -217,13 +248,19 @@ class ScoutAgent(ap.Agent):
         return neighbors
     
     def _is_valid_position(self, pos: Tuple[int, int]) -> bool:
-        """Verifica si una posición es válida y transitable"""
+        """Verifica si una posición es válida y transitable
+        
+        Para el scout, solo necesita ser un campo (FIELD) para poder escanearlo.
+        Puede moverse a través de cualquier celda transitable para llegar a campos.
+        """
         x, z = pos
         if not (0 <= x < self.width and 0 <= z < self.height):
             return False
         
         tile = self.grid[z][x]
-        return tile in (TileType.ROAD, TileType.FIELD, TileType.BARN)
+        # Scout puede moverse por cualquier celda transitable (no IMPASSABLE)
+        # pero solo escanea campos (FIELD)
+        return tile != TileType.IMPASSABLE
     
     def _calculate_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calcula distancia Manhattan entre dos posiciones"""

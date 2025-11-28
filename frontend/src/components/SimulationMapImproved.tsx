@@ -33,9 +33,27 @@ const TILE_COLORS = {
 }
 
 // Colores para agentes
-const FUMIGATOR_COLOR = '#3b82f6' // Azul
 const SCOUT_COLOR = '#00ffff'     // Cyan
 const COMPLETED_COLOR = '#10b981' // Verde oscuro para celdas fumigadas
+
+// Colores diferentes para cada fumigador
+const FUMIGATOR_COLORS = [
+  '#3b82f6', // Azul
+  '#ef4444', // Rojo
+  '#10b981', // Verde
+  '#f59e0b', // Amarillo/Naranja
+  '#8b5cf6', // Púrpura
+  '#ec4899', // Rosa
+  '#06b6d4', // Cyan
+  '#84cc16', // Lima
+]
+
+// Función para obtener color del fumigador basado en su ID
+const getFumigatorColor = (agentId: string, index: number): string => {
+  // Usar el índice o hash del ID para obtener un color consistente
+  const hash = agentId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
+  return FUMIGATOR_COLORS[(hash + index) % FUMIGATOR_COLORS.length]
+}
 
 export default function SimulationMap({
   world,
@@ -103,14 +121,14 @@ export default function SimulationMap({
           ctx.fillStyle = color
           ctx.fillRect(xPos, zPos, cellSize, cellSize)
 
-          // Si la celda NO está revelada, dibujar niebla de guerra
-          if (tileType === 2 && !isRevealed) { // Solo en campos
-            ctx.fillStyle = 'rgba(40, 40, 40, 0.7)'
+          // Si la celda NO está revelada Y es un campo, dibujar niebla de guerra
+          if (tileType === 2 && !isRevealed) { // Solo en campos no revelados
+            ctx.fillStyle = 'rgba(40, 40, 40, 0.8)'
             ctx.fillRect(xPos, zPos, cellSize, cellSize)
 
             // Símbolo de pregunta para celdas no reveladas
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'
-            ctx.font = `${cellSize * 0.6}px bold`
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'
+            ctx.font = `bold ${Math.max(cellSize * 0.5, 12)}px Arial`
             ctx.textAlign = 'center'
             ctx.textBaseline = 'middle'
             ctx.fillText('?', xPos + cellSize / 2, zPos + cellSize / 2)
@@ -174,13 +192,13 @@ export default function SimulationMap({
 
         // Borde según estado
         if (task.status === 'assigned' || task.status === 'in_progress') {
-          ctx.strokeStyle = FUMIGATOR_COLOR
+          ctx.strokeStyle = FUMIGATOR_COLORS[0] // Usar primer color para tareas
           ctx.lineWidth = 3
           ctx.strokeRect(xPos, zPos, cellSize, cellSize)
 
           // Flecha indicando que hay un agente en camino
           if (task.status === 'assigned') {
-            ctx.fillStyle = FUMIGATOR_COLOR
+            ctx.fillStyle = FUMIGATOR_COLORS[0] // Usar primer color para tareas
             ctx.font = `${cellSize * 0.5}px Arial`
             ctx.textAlign = 'center'
             ctx.textBaseline = 'middle'
@@ -230,13 +248,13 @@ export default function SimulationMap({
       })
 
       // Dibujar agentes (encima de todo)
-      agents.forEach((agent) => {
+      agents.forEach((agent, index) => {
         let x = agent.position_x ?? 0
         let z = agent.position_z ?? 0
 
         // Si hay animación de movimiento, interpolar posición
         const moveAnimation = Array.from(activeAnimations.values()).find(
-          a => a.type === 'move' && a.agentId === agent.id
+          a => a.type === 'move' && (a.agentId === agent.id || a.agentId === agent.agent_id)
         )
 
         if (moveAnimation && moveAnimation.from && moveAnimation.to) {
@@ -250,7 +268,9 @@ export default function SimulationMap({
         const xPos = offsetX + x * cellSize + cellSize / 2
         const zPos = offsetZ + z * cellSize + cellSize / 2
 
-        const agentColor = agent.agent_type === 'fumigator' ? FUMIGATOR_COLOR : SCOUT_COLOR
+        const agentColor = agent.agent_type === 'fumigator' 
+          ? getFumigatorColor(agent.agent_id, index) 
+          : SCOUT_COLOR
 
         // Sombra del agente
         ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'
@@ -314,7 +334,7 @@ export default function SimulationMap({
           <span>🔍 Scout (Dron Explorador)</span>
         </div>
         <div className="legend-item">
-          <div className="legend-color" style={{ backgroundColor: FUMIGATOR_COLOR }}></div>
+          <div className="legend-color" style={{ backgroundColor: FUMIGATOR_COLORS[0] }}></div>
           <span>🚜 Fumigador (Tractor)</span>
         </div>
         <div className="legend-item">

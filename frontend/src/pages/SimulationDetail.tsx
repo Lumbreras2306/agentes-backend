@@ -199,88 +199,115 @@ export default function SimulationDetail() {
 
     // Update agents
     if (data.agents && Array.isArray(data.agents)) {
-      const updatedAgents = data.agents.map((agentData: any) => {
-        const existingAgent = agents.find(a => a.agent_id === agentData.agent_id)
+      const updatedAgents = data.agents
+        .map((agentData: any) => {
+          // El WebSocket envía 'id' y 'type', no 'agent_id' y 'agent_type'
+          const agentId = agentData.id || agentData.agent_id
+          const agentType = agentData.type || agentData.agent_type
+          const existingAgent = agents.find(a => a.agent_id === agentId || a.id === agentId)
 
         // Create animation for movement
         if (existingAgent &&
             existingAgent.position_x !== undefined &&
             existingAgent.position_z !== undefined &&
+            agentData.position &&
+            Array.isArray(agentData.position) &&
             (existingAgent.position_x !== agentData.position[0] ||
              existingAgent.position_z !== agentData.position[1])) {
           const animation: ActiveAnimation = {
-            id: `move-${agentData.agent_id}-${Date.now()}`,
+            id: `move-${agentId}-${Date.now()}`,
             type: 'move',
-            agentId: agentData.agent_id,
+            agentId: agentId,
             startTime: performance.now(),
-            duration: 400,
+            duration: 800, // Aumentado de 400 a 800ms para animación más fluida
             from: [existingAgent.position_x, existingAgent.position_z],
             to: agentData.position,
           }
           startAnimation(animation)
         }
 
-        // Create scan animation for scouts
-        if (agentData.agent_type === 'scout' && agentData.status === 'scouting') {
-          const animation: ActiveAnimation = {
-            id: `scan-${agentData.agent_id}-${Date.now()}`,
-            type: 'scan',
-            agentId: agentData.agent_id,
-            startTime: performance.now(),
-            duration: 600,
-            position: agentData.position,
-          }
-          startAnimation(animation)
-
-          // Reveal cells around scout position
-          const [, z] = agentData.position
-          const newRevealed = new Set(revealedCells)
-          for (let dz = -1; dz <= 1; dz++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const checkZ = z + dz
-              const checkX = agentData.position[0] + dx
-              if (checkZ >= 0 && checkZ < (world?.height || 0) &&
-                  checkX >= 0 && checkX < (world?.width || 0)) {
-                newRevealed.add(`${checkX},${checkZ}`)
+        // Create scan animation for scouts and reveal cells
+        if (agentType === 'scout' && agentData.position) {
+          // Revelar celdas alrededor del scout (3x3) - siempre que el scout se mueva
+          const [x, z] = agentData.position
+          if (world && typeof x === 'number' && typeof z === 'number' && 
+              x >= 0 && z >= 0 && x < world.width && z < world.height) {
+            setRevealedCells(prevRevealed => {
+              const newRevealed = new Set(prevRevealed)
+              let hasChanges = false
+              // Revelar celdas en un área alrededor del scout (3x3)
+              for (let dz = -1; dz <= 1; dz++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                  const checkZ = z + dz
+                  const checkX = x + dx
+                  if (checkZ >= 0 && checkZ < world.height &&
+                      checkX >= 0 && checkX < world.width) {
+                    const cellKey = `${checkX},${checkZ}`
+                    if (!newRevealed.has(cellKey)) {
+                      newRevealed.add(cellKey)
+                      hasChanges = true
+                    }
+                  }
+                }
               }
-            }
+              // Solo retornar nuevo Set si hay cambios para evitar re-renders innecesarios
+              return hasChanges ? newRevealed : prevRevealed
+            })
           }
-          setRevealedCells(newRevealed)
+
+          if (agentData.status === 'scouting') {
+            const animation: ActiveAnimation = {
+              id: `scan-${agentId}-${Date.now()}`,
+              type: 'scan',
+              agentId: agentId,
+              startTime: performance.now(),
+              duration: 1000, // Aumentado de 600 a 1000ms
+              position: agentData.position,
+            }
+            startAnimation(animation)
+          }
         }
 
         // Create fumigation animation
-        if (agentData.agent_type === 'fumigator' && agentData.status === 'fumigating') {
+        if (agentType === 'fumigator' && agentData.status === 'fumigating') {
           const animation: ActiveAnimation = {
-            id: `fumigate-${agentData.agent_id}-${Date.now()}`,
+            id: `fumigate-${agentId}-${Date.now()}`,
             type: 'fumigate',
-            agentId: agentData.agent_id,
+            agentId: agentId,
             startTime: performance.now(),
-            duration: 800,
+            duration: 1200, // Aumentado de 800 a 1200ms
             position: agentData.position,
           }
           startAnimation(animation)
         }
 
-        const existingAgentData = existingAgent || agents.find(a => a.agent_id === agentData.agent_id)
+        const existingAgentData = existingAgent || agents.find(a => a.agent_id === agentId || a.id === agentId)
+        
+        // Asegurar que tenemos posición válida
+        if (!agentData.position || !Array.isArray(agentData.position) || agentData.position.length < 2) {
+          console.warn('Agent data missing position:', agentData)
+          return existingAgentData || null
+        }
         
         return {
-          id: agentData.agent_id,
-          agent_id: agentData.agent_id,
+          id: agentId,
+          agent_id: agentId,
           world: existingAgentData?.world || simulation?.world || '',
-          agent_type: agentData.agent_type,
+          agent_type: agentType || 'fumigator',
           is_active: existingAgentData?.is_active ?? true,
           position_x: agentData.position[0],
           position_z: agentData.position[1],
-          status: agentData.status,
+          status: agentData.status || 'idle',
           tasks_completed: agentData.tasks_completed || 0,
           fields_fumigated: agentData.fields_fumigated || 0,
           metadata: {
-            pesticide_level: agentData.pesticide_level,
+            pesticide_level: agentData.pesticide_level || 0,
           },
           created_at: existingAgentData?.created_at || new Date().toISOString(),
           updated_at: new Date().toISOString(),
         } as Agent
-      })
+        })
+        .filter((agent: Agent | null): agent is Agent => agent !== null)
 
       setAgents(updatedAgents)
     }
@@ -338,55 +365,12 @@ export default function SimulationDetail() {
 
   return (
     <div className="container simulation-detail">
+      {/* Header */}
       <div className="header">
         <Link to="/simulations" className="back-link">← Volver a Simulaciones</Link>
-        <h1>Simulación: {simulation.id}</h1>
-        <div className="status-badge status-{simulation.status}">{simulation.status}</div>
-      </div>
-
-      {/* Simulation Status Panel */}
-      <div className="simulation-status">
-        <h3>Estado de la Simulación</h3>
-
-        <div className={`phase-indicator ${currentPhase}`}>
-          {currentPhase === 'exploration' && '🔍 Fase de Exploración'}
-          {currentPhase === 'fumigation' && '🚜 Fase de Fumigación'}
-          {currentPhase === 'completed' && '✓ Simulación Completada'}
-        </div>
-
-        <div className="status-grid">
-          <div className="status-item">
-            <span className="status-label">Paso Actual</span>
-            <span className="status-value">{currentStep} / {simulation.max_steps}</span>
-          </div>
-          <div className="status-item">
-            <span className="status-label">Scout</span>
-            <span className="status-value scout">
-              {scoutAgents[0]?.status || 'idle'}
-            </span>
-          </div>
-          <div className="status-item">
-            <span className="status-label">Fumigadores Activos</span>
-            <span className="status-value fumigator">
-              {fumigatorAgents.filter(a => a.status !== 'idle').length} / {fumigatorAgents.length}
-            </span>
-          </div>
-          <div className="status-item">
-            <span className="status-label">Tareas Completadas</span>
-            <span className="status-value completed">
-              {completedTasks} / {totalTasks}
-            </span>
-          </div>
-          <div className="status-item">
-            <span className="status-label">Celdas Reveladas</span>
-            <span className="status-value">{revealedCells.size}</span>
-          </div>
-          <div className="status-item">
-            <span className="status-label">WebSocket</span>
-            <span className={`status-value ${wsConnected ? 'connected' : 'disconnected'}`}>
-              {wsConnected ? '✓ Conectado' : '✗ Desconectado'}
-            </span>
-          </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+          <h1>Simulación: {simulation.id}</h1>
+          <div className={`status-badge status-${simulation.status}`}>{simulation.status}</div>
         </div>
       </div>
 
@@ -403,7 +387,7 @@ export default function SimulationDetail() {
         </div>
       )}
 
-      {/* Simulation Map */}
+      {/* Simulation Map - Main Focus */}
       {world && (
         <SimulationMapImproved
           world={world}
@@ -416,30 +400,79 @@ export default function SimulationDetail() {
         />
       )}
 
-      {/* Agents List */}
-      <div className="agents-section">
-        <h3>Agentes ({agents.length})</h3>
-        <div className="agents-list">
-          {agents.map(agent => (
-            <div key={agent.id} className={`agent-card agent-${agent.agent_type}`}>
-              <div className="agent-header">
-                <span className="agent-icon">
-                  {agent.agent_type === 'scout' ? '🔍' : '🚜'}
-                </span>
-                <span className="agent-id">{agent.agent_id}</span>
-                <span className={`agent-status status-${agent.status}`}>
-                  {agent.status}
-                </span>
-              </div>
-              <div className="agent-stats">
-                <div>Posición: ({agent.position_x}, {agent.position_z})</div>
-                <div>Tareas completadas: {agent.tasks_completed}</div>
-                {agent.agent_type === 'fumigator' && (
-                  <div>Pesticida: {agent.metadata?.pesticide_level || 0}%</div>
-                )}
-              </div>
+      {/* Status and Info Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', marginTop: '2rem' }}>
+        {/* Simulation Status Panel */}
+        <div className="simulation-status">
+          <h3>Estado de la Simulación</h3>
+
+          <div className={`phase-indicator ${currentPhase}`}>
+            {currentPhase === 'exploration' && '🔍 Fase de Exploración'}
+            {currentPhase === 'fumigation' && '🚜 Fase de Fumigación'}
+            {currentPhase === 'completed' && '✓ Simulación Completada'}
+          </div>
+
+          <div className="status-grid">
+            <div className="status-item">
+              <span className="status-label">Paso Actual</span>
+              <span className="status-value">{currentStep} / {simulation.max_steps}</span>
             </div>
-          ))}
+            <div className="status-item">
+              <span className="status-label">Scout</span>
+              <span className="status-value scout">
+                {scoutAgents[0]?.status || 'idle'}
+              </span>
+            </div>
+            <div className="status-item">
+              <span className="status-label">Fumigadores Activos</span>
+              <span className="status-value fumigator">
+                {fumigatorAgents.filter(a => a.status !== 'idle').length} / {fumigatorAgents.length}
+              </span>
+            </div>
+            <div className="status-item">
+              <span className="status-label">Tareas Completadas</span>
+              <span className="status-value completed">
+                {completedTasks} / {totalTasks}
+              </span>
+            </div>
+            <div className="status-item">
+              <span className="status-label">Celdas Reveladas</span>
+              <span className="status-value">{revealedCells.size}</span>
+            </div>
+            <div className="status-item">
+              <span className="status-label">WebSocket</span>
+              <span className={`status-value ${wsConnected ? 'connected' : 'disconnected'}`}>
+                {wsConnected ? '✓ Conectado' : '✗ Desconectado'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Agents List */}
+        <div className="agents-section">
+          <h3>Agentes ({agents.length})</h3>
+          <div className="agents-list">
+            {agents.map(agent => (
+              <div key={agent.id} className={`agent-card agent-${agent.agent_type}`}>
+                <div className="agent-header">
+                  <span className="agent-icon">
+                    {agent.agent_type === 'scout' ? '🔍' : '🚜'}
+                  </span>
+                  <span className="agent-id">{agent.agent_id}</span>
+                  <span className={`agent-status status-${agent.status}`}>
+                    {agent.status}
+                  </span>
+                </div>
+                <div className="agent-stats">
+                  <div><strong>Posición:</strong> ({agent.position_x ?? '?'}, {agent.position_z ?? '?'})</div>
+                  <div><strong>Tareas:</strong> {agent.tasks_completed}</div>
+                  {agent.agent_type === 'fumigator' && (
+                    <div><strong>Pesticida:</strong> {agent.metadata?.pesticide_level || 0}%</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
