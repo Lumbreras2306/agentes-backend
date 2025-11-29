@@ -95,23 +95,31 @@ class ScoutAgent(ap.Agent):
             target = command.get('target_position')
 
             if target:
-                # Moverse hacia el objetivo
-                if self.position != target:
-                    self._move_towards(target)
-                    self.status = 'scouting'
-                else:
-                    # Llegamos al objetivo, revelar área
+                target_tuple = tuple(target) if isinstance(target, list) else target
+
+                # Verificar si ya llegamos al objetivo
+                if self.position == target_tuple:
+                    # YA ESTAMOS EN EL OBJETIVO
+                    # Revelar infestación alrededor
                     self._reveal_infestation_around_position(self.position)
-                    self.status = 'scouting'
+
+                    # CRÍTICO: Cambiar a 'idle' para recibir siguiente comando
+                    self.status = 'idle'
 
                     # Limpiar comando procesado
                     if hasattr(self.blackboard, 'knowledge_base'):
                         self.blackboard.knowledge_base.set_shared(f'command_{self.id}', None)
                     elif hasattr(self.blackboard, 'set_shared'):
                         self.blackboard.set_shared(f'command_{self.id}', None)
+
+                    print(f"🔍 Scout {self.id}: Llegó a {target_tuple}, revelando área, volviendo a idle")
+                else:
+                    # AÚN NO LLEGAMOS, MOVERNOS HACIA EL OBJETIVO
+                    self._move_towards(target_tuple)
+                    self.status = 'scouting'
             else:
-                # Comando sin objetivo, explorar por cuenta propia
-                self._explore()
+                # Comando sin objetivo, cambiar a idle
+                self.status = 'idle'
         else:
             # No hay comando del blackboard, usar lógica interna
             # (Fallback para compatibilidad, pero el ScoutCoordinatorKS debería dirigir)
@@ -289,6 +297,10 @@ class ScoutAgent(ap.Agent):
 
                 # Obtener nivel de infestación
                 infestation = self.infestation_grid[analyze_z][analyze_x]
+
+                # DEBUG: Log infestation levels
+                if infestation > 0:
+                    print(f"🐛 Scout {self.id}: Descubrió infestación {infestation}% en ({analyze_x}, {analyze_z})")
 
                 # Si hay infestación significativa, crear tarea en el blackboard
                 if infestation >= self.model.min_infestation:
