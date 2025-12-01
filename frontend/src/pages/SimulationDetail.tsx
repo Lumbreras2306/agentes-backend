@@ -228,16 +228,17 @@ export default function SimulationDetail() {
 
         // Create scan animation for scouts and reveal cells
         if (agentType === 'scout' && agentData.position) {
-          // Revelar celdas alrededor del scout (3x3) - siempre que el scout se mueva
+          // Revelar celdas alrededor del scout (5x5) - siempre que el scout se mueva
           const [x, z] = agentData.position
           if (world && typeof x === 'number' && typeof z === 'number' && 
               x >= 0 && z >= 0 && x < world.width && z < world.height) {
             setRevealedCells(prevRevealed => {
               const newRevealed = new Set(prevRevealed)
               let hasChanges = false
-              // Revelar celdas en un área alrededor del scout (3x3)
-              for (let dz = -1; dz <= 1; dz++) {
-                for (let dx = -1; dx <= 1; dx++) {
+              // Revelar celdas en un área alrededor del scout (5x5, radius=2)
+              // Esto coincide con el backend que usa reveal_radius=2
+              for (let dz = -2; dz <= 2; dz++) {
+                for (let dx = -2; dx <= 2; dx++) {
                   const checkZ = z + dz
                   const checkX = x + dx
                   if (checkZ >= 0 && checkZ < world.height &&

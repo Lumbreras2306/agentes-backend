@@ -257,15 +257,18 @@ class ScoutAgent(ap.Agent):
             # Si no hay nuevo blackboard, el modelo se encargará de actualizar
     
     def _reveal_infestation_around_position(self, pos: Tuple[int, int]):
-        """Revela infestación en un área 3x3 alrededor de la posición actual
+        """Revela infestación en un área 5x5 alrededor de la posición actual
 
-        Solo revela células en un radio pequeño para simular el escaneo del dron.
+        Radio de 2 celdas (5x5) permite al scout cubrir más área por escaneo,
+        habilitando un patrón eficiente de bajar 3 filas entre escaneos.
         Esto permite una revelación progresiva del mapa.
         """
         x, z = pos
 
-        # Radio de revelación (1 = área 3x3, 2 = área 5x5)
-        reveal_radius = 1
+        # Radio de revelación ajustado para bajar 3 filas
+        # Radio 2 = área 5x5, cubre z-2, z-1, z, z+1, z+2
+        # Permite escanear filas 0, 3, 6, 9... con cobertura completa
+        reveal_radius = 2
 
         # Track if we analyzed any new cells
         newly_analyzed = False

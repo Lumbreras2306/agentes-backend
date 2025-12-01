@@ -121,13 +121,16 @@ class ScoutCoordinatorKS(KnowledgeSource):
         height = self.kb.world_state.height
         grid = self.kb.world_state.grid
 
-        # Generate zigzag positions in strict order
-        # Row 0: (0,0), (1,0), (2,0), ..., (width-1, 0)
-        # Row 2: (width-1, 2), (width-2, 2), ..., (0, 2)
-        # Row 4: (0,4), (1,4), ..., (width-1, 4)
-        # etc.
+        # Generate zigzag positions in strict order with step=3
+        # Scout has 5x5 revelation radius (covers z-2 to z+2)
+        # Row 0: (0,0), (1,0), (2,0), ..., (width-1, 0) - covers z [-2, -1, 0, 1, 2]
+        # Row 3: (width-1, 3), (width-2, 3), ..., (0, 3) - covers z [1, 2, 3, 4, 5]
+        # Row 6: (0,6), (1,6), ..., (width-1, 6) - covers z [4, 5, 6, 7, 8]
+        # etc. - Full coverage with efficient 3-row stepping
 
-        for idx, z in enumerate(range(0, height, 2)):
+        # Escanear cada 3 filas (0, 3, 6, 9...) en lugar de 2
+        # El scout con radio 2 (5x5) cubre filas intermedias
+        for idx, z in enumerate(range(0, height, 3)):
             # Determine direction for this row
             if idx % 2 == 0:
                 # Even iterations: left → right
