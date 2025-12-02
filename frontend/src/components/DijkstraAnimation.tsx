@@ -17,16 +17,6 @@ interface DijkstraAnimationProps {
     color: string
   }>>
   tractorColors: string[]
-  dronePath?: number[][]
-  droneDestination?: number[]
-  droneSimulationSteps?: Array<{
-    position: number[]
-    path_index: number
-    arrived: boolean
-    color: string
-    revealed_infestation?: Record<string, number>
-  }>
-  droneColor?: string
   infestationGrid?: number[][]
   tileColors: {
     IMPASSABLE: string
@@ -45,11 +35,6 @@ function lerp(start: number, end: number, t: number): number {
   return start + (end - start) * t
 }
 
-// Calcula la distancia Manhattan entre dos puntos
-function manhattanDistance(x1: number, z1: number, x2: number, z2: number): number {
-  return Math.abs(x2 - x1) + Math.abs(z2 - z1)
-}
-
 export default function DijkstraAnimation({
   grid,
   width,
@@ -59,9 +44,6 @@ export default function DijkstraAnimation({
   destinations,
   simulationSteps,
   tractorColors,
-  droneDestination,
-  droneSimulationSteps,
-  droneColor = '#00ffff',
   infestationGrid,
   tileColors,
   speed = 300,
@@ -86,19 +68,7 @@ export default function DijkstraAnimation({
     lastStepTimeRef.current = performance.now()
   }, [currentStep])
 
-  const maxSteps = droneSimulationSteps && droneSimulationSteps.length > 0
-    ? droneSimulationSteps.length
-    : simulationSteps.length
-
-  // Función helper para calcular el paso del dron dado un paso de simulación
-  const getDroneStepForSimStep = useCallback((simStep: number): number => {
-    if (!droneSimulationSteps || droneSimulationSteps.length === 0) return 0
-    
-    const maxStepsForDrone = droneSimulationSteps.length
-    
-    // Mapeo directo: el dron avanza 1 paso por cada paso de simulación
-    return clamp(simStep, 0, maxStepsForDrone - 1)
-  }, [droneSimulationSteps])
+  const maxSteps = simulationSteps.length
 
   const renderCanvas = useCallback((interpolation: number) => {
     const canvas = canvasRef.current
@@ -120,16 +90,6 @@ export default function DijkstraAnimation({
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Obtener infestación revelada por el dron
-    let revealedInfestation: Record<string, number> = {}
-    if (droneSimulationSteps && droneSimulationSteps.length > 0) {
-      const droneStep = getDroneStepForSimStep(step)
-      const droneState = droneSimulationSteps[droneStep]
-      if (droneState?.revealed_infestation) {
-        revealedInfestation = droneState.revealed_infestation
-      }
-    }
-
     // Dibujar grid base
     for (let z = 0; z < height; z++) {
       for (let x = 0; x < width; x++) {
@@ -146,9 +106,9 @@ export default function DijkstraAnimation({
         ctx.fillStyle = color
         ctx.fillRect(xPos, zPos, cellSize, cellSize)
 
-        const cellKey = `${x},${z}`
-        if (revealedInfestation[cellKey] !== undefined && infestationGrid) {
-          const infestationLevel = revealedInfestation[cellKey]
+        // Mostrar toda la infestación desde el inicio
+        if (infestationGrid && infestationGrid[z] && infestationGrid[z][x] !== undefined) {
+          const infestationLevel = infestationGrid[z][x]
           if (infestationLevel > 0) {
             const intensity = infestationLevel / 100
             const r = Math.floor(255 * intensity)
@@ -275,89 +235,6 @@ export default function DijkstraAnimation({
       })
     }
 
-    // Dibujar dron CON INTERPOLACIÓN CORRECTA
-    if (droneSimulationSteps && droneSimulationSteps.length > 0) {
-      // Calcular paso del dron para el paso ACTUAL de simulación
-      const droneStep = getDroneStepForSimStep(step)
-      // Calcular paso del dron para el paso ANTERIOR de simulación
-      const prevSimStep = step > 0 ? step - 1 : 0
-      const prevDroneStep = getDroneStepForSimStep(prevSimStep)
-
-      const droneState = droneSimulationSteps[droneStep]
-      const prevDroneState = droneSimulationSteps[prevDroneStep]
-
-      if (droneState?.position && droneState.position.length >= 2) {
-        const targetDx = clamp(droneState.position[0], 0, width - 1)
-        const targetDz = clamp(droneState.position[1], 0, height - 1)
-
-        let startDx = targetDx
-        let startDz = targetDz
-        
-        if (prevDroneState?.position && prevDroneState.position.length >= 2) {
-          startDx = clamp(prevDroneState.position[0], 0, width - 1)
-          startDz = clamp(prevDroneState.position[1], 0, height - 1)
-        }
-
-        // Si la distancia es muy grande (cambio de fila), NO interpolar
-        const distance = manhattanDistance(startDx, startDz, targetDx, targetDz)
-        let displayDx: number
-        let displayDz: number
-        
-        if (distance > 2) {
-          // Salto grande - usar posición destino directamente
-          displayDx = targetDx
-          displayDz = targetDz
-        } else {
-          // Movimiento normal - interpolar
-          displayDx = lerp(startDx, targetDx, interpolation)
-          displayDz = lerp(startDz, targetDz, interpolation)
-        }
-
-        const droneX = offsetX + displayDx * cellSize + cellSize / 2
-        const droneZ = offsetZ + displayDz * cellSize + cellSize / 2
-        const droneRadius = cellSize * 0.3
-
-        ctx.fillStyle = droneColor
-        ctx.beginPath()
-        ctx.arc(droneX, droneZ, droneRadius, 0, Math.PI * 2)
-        ctx.fill()
-
-        ctx.strokeStyle = '#000000'
-        ctx.lineWidth = 2
-        ctx.stroke()
-
-        // Símbolo X del dron
-        ctx.strokeStyle = '#ffffff'
-        ctx.lineWidth = 2
-        const hr = droneRadius * 0.5
-        ctx.beginPath()
-        ctx.moveTo(droneX - hr, droneZ - hr)
-        ctx.lineTo(droneX + hr, droneZ + hr)
-        ctx.moveTo(droneX + hr, droneZ - hr)
-        ctx.lineTo(droneX - hr, droneZ + hr)
-        ctx.stroke()
-      }
-    }
-
-    // Destino del dron
-    if (droneDestination && droneDestination.length >= 2) {
-      const ddx = clamp(droneDestination[0], 0, width - 1)
-      const ddz = clamp(droneDestination[1], 0, height - 1)
-      const destX = offsetX + ddx * cellSize
-      const destZ = offsetZ + ddz * cellSize
-
-      ctx.fillStyle = droneColor
-      ctx.globalAlpha = 0.6
-      ctx.fillRect(destX, destZ, cellSize, cellSize)
-      ctx.globalAlpha = 1.0
-
-      ctx.strokeStyle = droneColor
-      ctx.lineWidth = 3
-      ctx.setLineDash([5, 5])
-      ctx.strokeRect(destX, destZ, cellSize, cellSize)
-      ctx.setLineDash([])
-    }
-
     // Granero
     for (let z = 0; z < height; z++) {
       for (let x = 0; x < width; x++) {
@@ -372,7 +249,7 @@ export default function DijkstraAnimation({
         }
       }
     }
-  }, [grid, width, height, barnPos, tractorPaths, destinations, simulationSteps, tractorColors, droneDestination, droneSimulationSteps, droneColor, infestationGrid, tileColors, getDroneStepForSimStep])
+  }, [grid, width, height, barnPos, tractorPaths, destinations, simulationSteps, tractorColors, infestationGrid, tileColors])
 
   // Loop de animación
   useEffect(() => {

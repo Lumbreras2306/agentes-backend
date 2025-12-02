@@ -33,7 +33,6 @@ const TILE_COLORS = {
 }
 
 // Colores para agentes
-const SCOUT_COLOR = '#00ffff'     // Cyan
 const COMPLETED_COLOR = '#10b981' // Verde oscuro para celdas fumigadas
 
 // Colores diferentes para cada fumigador
@@ -100,13 +99,11 @@ export default function SimulationMap({
       ctx.fillStyle = '#f0f0f0'
       ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-      // Dibujar grid base y revelación progresiva
+      // Dibujar grid base - todas las celdas están reveladas desde el inicio
       for (let z = 0; z < world.height; z++) {
         for (let x = 0; x < world.width; x++) {
           const tileType = world.grid[z][x]
-          const cellKey = `${x},${z}`
-          const isRevealed = revealedCells.has(cellKey)
-          const isCompleted = completedCells.has(cellKey)
+          const isCompleted = completedCells.has(`${x},${z}`)
 
           let color = TILE_COLORS.IMPASSABLE
 
@@ -120,19 +117,6 @@ export default function SimulationMap({
           // Dibujar tile base
           ctx.fillStyle = color
           ctx.fillRect(xPos, zPos, cellSize, cellSize)
-
-          // Si la celda NO está revelada Y es un campo, dibujar niebla de guerra
-          if (tileType === 2 && !isRevealed) { // Solo en campos no revelados
-            ctx.fillStyle = 'rgba(40, 40, 40, 0.8)'
-            ctx.fillRect(xPos, zPos, cellSize, cellSize)
-
-            // Símbolo de pregunta para celdas no reveladas
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'
-            ctx.font = `bold ${Math.max(cellSize * 0.5, 12)}px Arial`
-            ctx.textAlign = 'center'
-            ctx.textBaseline = 'middle'
-            ctx.fillText('?', xPos + cellSize / 2, zPos + cellSize / 2)
-          }
 
           // Si está completada (fumigada), mostrar en verde con check
           if (isCompleted) {
@@ -152,8 +136,8 @@ export default function SimulationMap({
             ctx.lineTo(xPos + cellSize * 0.75, zPos + cellSize * 0.35)
             ctx.stroke()
           }
-          // Si está revelada y tiene infestación, mostrar nivel
-          else if (isRevealed && showInfestation) {
+          // Mostrar infestación (todas las celdas están reveladas desde el inicio)
+          else if (showInfestation) {
             const gridToUse = infestationGrid || world.infestation_grid
             if (gridToUse && gridToUse[z] && gridToUse[z][x] > 0) {
               const infestationLevel = gridToUse[z][x]
@@ -212,23 +196,7 @@ export default function SimulationMap({
         const elapsed = currentTime - animation.startTime
         const progress = Math.min(elapsed / animation.duration, 1)
 
-        if (animation.type === 'scan' && animation.position) {
-          // Efecto de escaneo del scout: onda que se expande
-          const [x, z] = animation.position
-          const xPos = offsetX + x * cellSize + cellSize / 2
-          const zPos = offsetZ + z * cellSize + cellSize / 2
-
-          const radius = Math.max(0, cellSize * 2 * progress) // Asegurar que el radio nunca sea negativo
-          const alpha = Math.max(0, Math.min(1, 0.5 * (1 - progress))) // Asegurar alpha entre 0 y 1
-
-          if (radius > 0 && alpha > 0) {
-            ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`
-            ctx.lineWidth = 3
-            ctx.beginPath()
-            ctx.arc(xPos, zPos, radius, 0, Math.PI * 2)
-            ctx.stroke()
-          }
-        }
+        // Animación de escaneo eliminada (scouts eliminados)
 
         if (animation.type === 'fumigate' && animation.position) {
           // Efecto de fumigación: círculos concéntricos verdes
@@ -275,9 +243,7 @@ export default function SimulationMap({
         // Asegurar que cellSize es válido antes de dibujar
         if (cellSize <= 0) return
 
-        const agentColor = agent.agent_type === 'fumigator' 
-          ? getFumigatorColor(agent.agent_id, index) 
-          : SCOUT_COLOR
+        const agentColor = getFumigatorColor(agent.agent_id, index)
 
         const agentRadius = Math.max(1, cellSize * 0.35) // Asegurar radio mínimo de 1
 
@@ -298,13 +264,12 @@ export default function SimulationMap({
         ctx.lineWidth = 2
         ctx.stroke()
 
-        // Icono según tipo
+        // Icono - solo tractores
         ctx.fillStyle = '#ffffff'
         ctx.font = `bold ${cellSize * 0.3}px Arial`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
-        const icon = agent.agent_type === 'fumigator' ? '🚜' : '🔍'
-        ctx.fillText(icon, xPos, zPos)
+        ctx.fillText('🚜', xPos, zPos)
 
         // Estado del agente (si está activo)
         if (agent.status !== 'idle') {
@@ -339,20 +304,12 @@ export default function SimulationMap({
       <div className="simulation-map-legend">
         <h4>Leyenda</h4>
         <div className="legend-item">
-          <div className="legend-color" style={{ backgroundColor: SCOUT_COLOR }}></div>
-          <span>🔍 Scout (Dron Explorador)</span>
-        </div>
-        <div className="legend-item">
           <div className="legend-color" style={{ backgroundColor: FUMIGATOR_COLORS[0] }}></div>
           <span>🚜 Fumigador (Tractor)</span>
         </div>
         <div className="legend-item">
           <div className="legend-color" style={{ backgroundColor: COMPLETED_COLOR }}></div>
           <span>✓ Campo Fumigado</span>
-        </div>
-        <div className="legend-item">
-          <div className="legend-color fog"></div>
-          <span>? Campo No Revelado</span>
         </div>
         <div className="legend-item">
           <div className="legend-color infestation"></div>

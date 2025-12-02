@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { simulationsApi, worldsApi } from '../services/api'
 import { Simulation, Agent, BlackboardTask, World } from '../types'
@@ -27,13 +27,14 @@ export default function SimulationDetail() {
   const [loading, setLoading] = useState(true)
   const [wsConnected, setWsConnected] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
-  const [currentPhase, setCurrentPhase] = useState<'exploration' | 'fumigation' | 'completed'>('exploration')
+  const [currentPhase, setCurrentPhase] = useState<'fumigation' | 'completed'>('fumigation')
   const [revealedCells, setRevealedCells] = useState<Set<string>>(new Set())
   const [infestationGrid, setInfestationGrid] = useState<number[][] | null>(null)
   const [activeAnimations, setActiveAnimations] = useState<Map<string, ActiveAnimation>>(new Map())
 
   const wsRef = useRef<SimulationWebSocket | null>(null)
   const animationTimeoutRef = useRef<Map<string, number>>(new Map())
+  const cellsInitializedRef = useRef<boolean>(false)
 
   useEffect(() => {
     if (id) {
@@ -51,16 +52,6 @@ export default function SimulationDetail() {
       animationTimeoutRef.current.forEach(timeout => clearTimeout(timeout))
     }
   }, [id])
-
-  useEffect(() => {
-    if (simulation?.status === 'running' && !wsRef.current) {
-      connectWebSocket()
-    } else if (simulation?.status !== 'running' && wsRef.current) {
-      wsRef.current.disconnect()
-      wsRef.current = null
-      setWsConnected(false)
-    }
-  }, [simulation?.status])
 
   const loadSimulation = async () => {
     try {
@@ -150,139 +141,56 @@ export default function SimulationDetail() {
     animationTimeoutRef.current.set(animation.id, timeout)
   }
 
-  const connectWebSocket = () => {
-    if (!id) return
-
-    const ws = new SimulationWebSocket(id)
-
-    ws.on('connection', (data) => {
-      console.log('WebSocket connected:', data)
-      setWsConnected(true)
-    })
-
-    ws.on('step_update', (data) => {
-      console.log('Step update:', data)
-      handleStepUpdate(data)
-    })
-
-    ws.on('simulation_completed', (data) => {
-      console.log('Simulation completed:', data)
-      setCurrentPhase('completed')
-      setSimulation(prev => prev ? { ...prev, status: 'completed' } : null)
-    })
-
-    // Usar listeners genéricos para eventos no tipados
-    ws.on('*', (data) => {
-      const dataType = (data as any).type || data.type
-      if (dataType === 'scout_exploration_complete') {
-        console.log('Scout exploration complete:', data)
-        setCurrentPhase('fumigation')
-      }
-      if (dataType === 'error') {
-        console.error('WebSocket error:', data)
-      }
-      if (dataType === 'close') {
-        console.log('WebSocket disconnected')
-        setWsConnected(false)
-      }
-    })
-
-    ws.connect().catch((error) => {
-      console.error('Error connecting WebSocket:', error)
-      setWsConnected(false)
-    })
-    wsRef.current = ws
-  }
-
-  const handleStepUpdate = (data: any) => {
+  const handleStepUpdate = useCallback((data: any) => {
     setCurrentStep(data.step || 0)
 
     // Update agents
     if (data.agents && Array.isArray(data.agents)) {
-      const updatedAgents = data.agents
-        .map((agentData: any) => {
-          // El backend envía 'agent_id' y 'agent_type', pero también puede enviar 'id' y 'type'
-          const agentId = agentData.agent_id || agentData.id
-          const agentType = agentData.agent_type || agentData.type
-          const existingAgent = agents.find(a => a.agent_id === agentId || a.id === agentId)
+      setAgents(prevAgents => {
+        const updatedAgents = data.agents
+          .map((agentData: any) => {
+            // El backend envía 'agent_id' y 'agent_type', pero también puede enviar 'id' y 'type'
+            const agentId = agentData.agent_id || agentData.id
+            const agentType = agentData.agent_type || agentData.type
+            const existingAgent = prevAgents.find(a => a.agent_id === agentId || a.id === agentId)
 
-        // Create animation for movement
-        if (existingAgent &&
-            existingAgent.position_x !== undefined &&
-            existingAgent.position_z !== undefined &&
-            agentData.position &&
-            Array.isArray(agentData.position) &&
-            (existingAgent.position_x !== agentData.position[0] ||
-             existingAgent.position_z !== agentData.position[1])) {
-          const animation: ActiveAnimation = {
-            id: `move-${agentId}-${Date.now()}`,
-            type: 'move',
-            agentId: agentId,
-            startTime: performance.now(),
-            duration: 800, // Aumentado de 400 a 800ms para animación más fluida
-            from: [existingAgent.position_x, existingAgent.position_z],
-            to: agentData.position,
-          }
-          startAnimation(animation)
-        }
-
-        // Create scan animation for scouts and reveal cells
-        if (agentType === 'scout' && agentData.position) {
-          // Revelar celdas alrededor del scout (5x5) - siempre que el scout se mueva
-          const [x, z] = agentData.position
-          if (world && typeof x === 'number' && typeof z === 'number' && 
-              x >= 0 && z >= 0 && x < world.width && z < world.height) {
-            setRevealedCells(prevRevealed => {
-              const newRevealed = new Set(prevRevealed)
-              let hasChanges = false
-              // Revelar celdas en un área alrededor del scout (5x5, radius=2)
-              // Esto coincide con el backend que usa reveal_radius=2
-              for (let dz = -2; dz <= 2; dz++) {
-                for (let dx = -2; dx <= 2; dx++) {
-                  const checkZ = z + dz
-                  const checkX = x + dx
-                  if (checkZ >= 0 && checkZ < world.height &&
-                      checkX >= 0 && checkX < world.width) {
-                    const cellKey = `${checkX},${checkZ}`
-                    if (!newRevealed.has(cellKey)) {
-                      newRevealed.add(cellKey)
-                      hasChanges = true
-                    }
-                  }
-                }
+            // Create animation for movement
+            if (existingAgent &&
+                existingAgent.position_x !== undefined &&
+                existingAgent.position_z !== undefined &&
+                agentData.position &&
+                Array.isArray(agentData.position) &&
+                (existingAgent.position_x !== agentData.position[0] ||
+                 existingAgent.position_z !== agentData.position[1])) {
+              const animation: ActiveAnimation = {
+                id: `move-${agentId}-${Date.now()}`,
+                type: 'move',
+                agentId: agentId,
+                startTime: performance.now(),
+                duration: 800, // Aumentado de 400 a 800ms para animación más fluida
+                from: [existingAgent.position_x, existingAgent.position_z],
+                to: agentData.position,
               }
-              // Solo retornar nuevo Set si hay cambios para evitar re-renders innecesarios
-              return hasChanges ? newRevealed : prevRevealed
-            })
-          }
-
-          if (agentData.status === 'scouting') {
-            const animation: ActiveAnimation = {
-              id: `scan-${agentId}-${Date.now()}`,
-              type: 'scan',
-              agentId: agentId,
-              startTime: performance.now(),
-              duration: 1000, // Aumentado de 600 a 1000ms
-              position: agentData.position,
+              startAnimation(animation)
             }
-            startAnimation(animation)
-          }
-        }
 
-        // Create fumigation animation
-        if (agentType === 'fumigator' && agentData.status === 'fumigating') {
-          const animation: ActiveAnimation = {
-            id: `fumigate-${agentId}-${Date.now()}`,
-            type: 'fumigate',
-            agentId: agentId,
-            startTime: performance.now(),
-            duration: 1200, // Aumentado de 800 a 1200ms
-            position: agentData.position,
-          }
-          startAnimation(animation)
-        }
+            // Scouts eliminados - todas las celdas están reveladas desde el inicio
+            // La inicialización se hace en el useEffect cuando se carga el mundo
 
-        const existingAgentData = existingAgent || agents.find(a => a.agent_id === agentId || a.id === agentId)
+            // Create fumigation animation
+            if (agentType === 'fumigator' && agentData.status === 'fumigating') {
+              const animation: ActiveAnimation = {
+                id: `fumigate-${agentId}-${Date.now()}`,
+                type: 'fumigate',
+                agentId: agentId,
+                startTime: performance.now(),
+                duration: 1200, // Aumentado de 800 a 1200ms
+                position: agentData.position,
+              }
+              startAnimation(animation)
+            }
+
+            const existingAgentData = existingAgent || prevAgents.find(a => a.agent_id === agentId || a.id === agentId)
         
         // Asegurar que tenemos posición válida
         if (!agentData.position || !Array.isArray(agentData.position) || agentData.position.length < 2) {
@@ -300,27 +208,28 @@ export default function SimulationDetail() {
           return null
         }
         
-        return {
-          id: agentId,
-          agent_id: agentId,
-          world: existingAgentData?.world || simulation?.world || '',
-          agent_type: agentType || 'fumigator',
-          is_active: existingAgentData?.is_active ?? true,
-          position_x: agentData.position[0],
-          position_z: agentData.position[1],
-          status: agentData.status || 'idle',
-          tasks_completed: agentData.tasks_completed || 0,
-          fields_fumigated: agentData.fields_fumigated || 0,
-          metadata: {
-            pesticide_level: agentData.pesticide_level || 0,
-          },
-          created_at: existingAgentData?.created_at || new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        } as Agent
-        })
-        .filter((agent: Agent | null): agent is Agent => agent !== null)
-
-      setAgents(updatedAgents)
+            return {
+              id: agentId,
+              agent_id: agentId,
+              world: existingAgentData?.world || '',
+              agent_type: agentType || 'fumigator',
+              is_active: existingAgentData?.is_active ?? true,
+              position_x: agentData.position[0],
+              position_z: agentData.position[1],
+              status: agentData.status || 'idle',
+              tasks_completed: agentData.tasks_completed || 0,
+              fields_fumigated: agentData.fields_fumigated || 0,
+              metadata: {
+                pesticide_level: agentData.pesticide_level || 0,
+              },
+              created_at: existingAgentData?.created_at || new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            } as Agent
+          })
+          .filter((agent: Agent | null): agent is Agent => agent !== null)
+        
+        return updatedAgents
+      })
     }
 
     // Update tasks
@@ -343,15 +252,65 @@ export default function SimulationDetail() {
       setInfestationGrid(data.infestation_grid)
     }
 
-    // Check phase
-    if (data.statistics) {
-      const scoutCoverage = data.statistics.total_fields_analyzed /
-                           (data.statistics.total_fields_analyzed + data.statistics.pending_tasks)
-      if (scoutCoverage >= 0.99 && currentPhase === 'exploration') {
-        setCurrentPhase('fumigation')
+    // Fase siempre es fumigation desde el inicio (scouts eliminados)
+    setCurrentPhase(prev => {
+      if (prev !== 'fumigation' && prev !== 'completed') {
+        return 'fumigation'
       }
+      return prev
+    })
+  }, [])
+
+  const connectWebSocket = useCallback(() => {
+    if (!id) return
+    if (wsRef.current) return // Ya hay una conexión activa
+
+    const ws = new SimulationWebSocket(id)
+
+    ws.on('connection', (data) => {
+      console.log('WebSocket connected:', data)
+      setWsConnected(true)
+    })
+
+    ws.on('step_update', (data) => {
+      console.log('Step update:', data)
+      handleStepUpdate(data)
+    })
+
+    ws.on('simulation_completed', (data) => {
+      console.log('Simulation completed:', data)
+      setCurrentPhase('completed')
+      setSimulation(prev => prev ? { ...prev, status: 'completed' } : null)
+    })
+
+    // Usar listeners genéricos para eventos no tipados
+    ws.on('*', (data) => {
+      const dataType = (data as any).type || data.type
+      if (dataType === 'error') {
+        console.error('WebSocket error:', data)
+      }
+      if (dataType === 'close') {
+        console.log('WebSocket disconnected')
+        setWsConnected(false)
+      }
+    })
+
+    ws.connect().catch((error) => {
+      console.error('Error connecting WebSocket:', error)
+      setWsConnected(false)
+    })
+    wsRef.current = ws
+  }, [id, handleStepUpdate])
+
+  useEffect(() => {
+    if (simulation?.status === 'running' && !wsRef.current) {
+      connectWebSocket()
+    } else if (simulation?.status !== 'running' && wsRef.current) {
+      wsRef.current.disconnect()
+      wsRef.current = null
+      setWsConnected(false)
     }
-  }
+  }, [simulation?.status, connectWebSocket])
 
   if (loading && !simulation) {
     return (
@@ -369,10 +328,23 @@ export default function SimulationDetail() {
     )
   }
 
-  const scoutAgents = agents.filter(a => a.agent_type === 'scout')
   const fumigatorAgents = agents.filter(a => a.agent_type === 'fumigator')
   const completedTasks = tasks.filter(t => t.status === 'completed').length
   const totalTasks = tasks.length
+  
+  // Inicializar todas las celdas como reveladas desde el inicio (solo una vez)
+  useEffect(() => {
+    if (world && !cellsInitializedRef.current) {
+      const allCells = new Set<string>()
+      for (let z = 0; z < world.height; z++) {
+        for (let x = 0; x < world.width; x++) {
+          allCells.add(`${x},${z}`)
+        }
+      }
+      setRevealedCells(allCells)
+      cellsInitializedRef.current = true
+    }
+  }, [world])
 
   return (
     <div className="container simulation-detail">
@@ -418,7 +390,6 @@ export default function SimulationDetail() {
           <h3>Estado de la Simulación</h3>
 
           <div className={`phase-indicator ${currentPhase}`}>
-            {currentPhase === 'exploration' && '🔍 Fase de Exploración'}
             {currentPhase === 'fumigation' && '🚜 Fase de Fumigación'}
             {currentPhase === 'completed' && '✓ Simulación Completada'}
           </div>
@@ -427,12 +398,6 @@ export default function SimulationDetail() {
             <div className="status-item">
               <span className="status-label">Paso Actual</span>
               <span className="status-value">{currentStep} / {simulation.max_steps}</span>
-            </div>
-            <div className="status-item">
-              <span className="status-label">Scout</span>
-              <span className="status-value scout">
-                {scoutAgents[0]?.status || 'idle'}
-              </span>
             </div>
             <div className="status-item">
               <span className="status-label">Fumigadores Activos</span>
@@ -447,10 +412,6 @@ export default function SimulationDetail() {
               </span>
             </div>
             <div className="status-item">
-              <span className="status-label">Celdas Reveladas</span>
-              <span className="status-value">{revealedCells.size}</span>
-            </div>
-            <div className="status-item">
               <span className="status-label">WebSocket</span>
               <span className={`status-value ${wsConnected ? 'connected' : 'disconnected'}`}>
                 {wsConnected ? '✓ Conectado' : '✗ Desconectado'}
@@ -463,12 +424,12 @@ export default function SimulationDetail() {
         <div className="agents-section">
           <h3>Agentes ({agents.length})</h3>
           <div className="agents-list">
-            {agents.map(agent => (
+            {agents
+              .filter(agent => agent.agent_type === 'fumigator') // Solo mostrar fumigadores
+              .map(agent => (
               <div key={agent.id} className={`agent-card agent-${agent.agent_type}`}>
                 <div className="agent-header">
-                  <span className="agent-icon">
-                    {agent.agent_type === 'scout' ? '🔍' : '🚜'}
-                  </span>
+                  <span className="agent-icon">🚜</span>
                   <span className="agent-id">{agent.agent_id}</span>
                   <span className={`agent-status status-${agent.status}`}>
                     {agent.status}
@@ -477,9 +438,7 @@ export default function SimulationDetail() {
                 <div className="agent-stats">
                   <div><strong>Posición:</strong> ({agent.position_x ?? '?'}, {agent.position_z ?? '?'})</div>
                   <div><strong>Tareas:</strong> {agent.tasks_completed}</div>
-                  {agent.agent_type === 'fumigator' && (
-                    <div><strong>Pesticida:</strong> {agent.metadata?.pesticide_level || 0}%</div>
-                  )}
+                  <div><strong>Pesticida:</strong> {agent.metadata?.pesticide_level || 0}%</div>
                 </div>
               </div>
             ))}

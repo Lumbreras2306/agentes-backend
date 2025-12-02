@@ -52,9 +52,10 @@ def run_simulation(
     blackboard_service = BlackboardService(world)
 
     # Create model parameters
+    # Forzar num_scouts a 0 - scouts eliminados
     parameters = {
         'num_fumigators': simulation.num_fumigators,
-        'num_scouts': simulation.num_scouts,
+        'num_scouts': 0,  # Scouts eliminados - comenzar directamente con fumigación
         'world_instance': world,
         'blackboard_service': blackboard_service,
         'simulation_id': str(simulation_id),

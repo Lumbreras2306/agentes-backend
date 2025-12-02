@@ -46,17 +46,15 @@ class ControlComponent:
             TaskAllocatorKS,
             ResourceManagerKS,
             PathPlannerKS,
-            ScoutCoordinatorKS,
             ConflictResolverKS,
         )
 
-        # Initialize Knowledge Sources
+        # Initialize Knowledge Sources (ScoutCoordinatorKS eliminado)
         self.knowledge_sources = [
             TaskPlannerKS(self.kb),
             TaskAllocatorKS(self.kb),
             ResourceManagerKS(self.kb),
             PathPlannerKS(self.kb),
-            ScoutCoordinatorKS(self.kb),
             ConflictResolverKS(self.kb),
         ]
 
