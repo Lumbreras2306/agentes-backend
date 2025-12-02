@@ -82,10 +82,18 @@ export default function SimulationMap({
     // Función de renderizado con animaciones
     const render = (currentTime: number) => {
       const canvas = canvasRef.current
-      if (!canvas || !world) return
+      if (!canvas || !world) {
+        console.log('Canvas or world not available', { canvas: !!canvas, world: !!world })
+        return
+      }
 
       const ctx = canvas.getContext('2d')
-      if (!ctx) return
+      if (!ctx) {
+        console.log('Could not get canvas context')
+        return
+      }
+      
+      console.log('Rendering map:', { agentsCount: agents.length, tasksCount: tasks.length, hasInfestationGrid: !!infestationGrid })
 
       const cellSize = Math.min(
         Math.floor(canvas.width / world.width),
@@ -139,7 +147,7 @@ export default function SimulationMap({
           // Mostrar infestación (todas las celdas están reveladas desde el inicio)
           else if (showInfestation) {
             const gridToUse = infestationGrid || world.infestation_grid
-            if (gridToUse && gridToUse[z] && gridToUse[z][x] > 0) {
+            if (gridToUse && Array.isArray(gridToUse) && gridToUse[z] && Array.isArray(gridToUse[z]) && gridToUse[z][x] > 0) {
               const infestationLevel = gridToUse[z][x]
               const intensity = infestationLevel / 100
 
@@ -220,9 +228,17 @@ export default function SimulationMap({
       })
 
       // Dibujar agentes (encima de todo)
+      if (agents.length === 0) {
+        console.log('No agents to render')
+      }
       agents.forEach((agent, index) => {
         let x = agent.position_x ?? 0
         let z = agent.position_z ?? 0
+        
+        // Debug: verificar que el agente tenga posición válida
+        if (x === 0 && z === 0 && agent.position_x === undefined && agent.position_z === undefined) {
+          console.warn('Agent without position:', agent)
+        }
 
         // Si hay animación de movimiento, interpolar posición
         const moveAnimation = Array.from(activeAnimations.values()).find(

@@ -82,8 +82,7 @@ class ConnectionMessage(Message):
     def __init__(self, simulation_id: str, **kwargs):
         super().__init__(
             type=MessageType.CONNECTION.value,
-            timestamp=datetime.now().isoformat(),
-            **kwargs
+            timestamp=datetime.now().isoformat()
         )
         self.simulation_id = simulation_id
 
@@ -127,8 +126,7 @@ class StepUpdateMessage(Message):
     def __init__(self, step: int, agents: List, tasks: List, statistics: Dict, **kwargs):
         super().__init__(
             type=MessageType.STEP_UPDATE.value,
-            timestamp=datetime.now().isoformat(),
-            **kwargs
+            timestamp=datetime.now().isoformat()
         )
         self.step = step
         self.agents = agents
@@ -148,8 +146,7 @@ class AgentCommandMessage(Message):
     def __init__(self, agent_id: str, command: str, parameters: Dict, **kwargs):
         super().__init__(
             type=MessageType.AGENT_COMMAND.value,
-            timestamp=datetime.now().isoformat(),
-            **kwargs
+            timestamp=datetime.now().isoformat()
         )
         self.agent_id = agent_id
         self.command = command
@@ -168,8 +165,7 @@ class SimulationCompletedMessage(Message):
     def __init__(self, simulation_id: str, total_steps: int, statistics: Dict, results: Dict, **kwargs):
         super().__init__(
             type=MessageType.SIMULATION_COMPLETED.value,
-            timestamp=datetime.now().isoformat(),
-            **kwargs
+            timestamp=datetime.now().isoformat()
         )
         self.simulation_id = simulation_id
         self.total_steps = total_steps
@@ -186,8 +182,7 @@ class ErrorMessage(Message):
     def __init__(self, error: str, **kwargs):
         super().__init__(
             type=MessageType.SIMULATION_ERROR.value,
-            timestamp=datetime.now().isoformat(),
-            **kwargs
+            timestamp=datetime.now().isoformat()
         )
         self.error = error
         self.details = kwargs.get('details')

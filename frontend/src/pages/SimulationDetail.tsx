@@ -36,27 +36,11 @@ export default function SimulationDetail() {
   const animationTimeoutRef = useRef<Map<string, number>>(new Map())
   const cellsInitializedRef = useRef<boolean>(false)
 
-  useEffect(() => {
-    if (id) {
-      loadSimulation()
-      loadAgents()
-      loadTasks()
-    }
-
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.disconnect()
-        wsRef.current = null
-      }
-      // Clear all animation timeouts
-      animationTimeoutRef.current.forEach(timeout => clearTimeout(timeout))
-    }
-  }, [id])
-
-  const loadSimulation = async () => {
+  const loadSimulation = useCallback(async () => {
+    if (!id) return
     try {
       setLoading(true)
-      const response = await simulationsApi.get(id!)
+      const response = await simulationsApi.get(id)
       setSimulation(response.data)
 
       if (response.data.world) {
@@ -83,25 +67,44 @@ export default function SimulationDetail() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [id])
 
-  const loadAgents = async () => {
+  const loadAgents = useCallback(async () => {
+    if (!id) return
     try {
-      const response = await simulationsApi.getAgents(id!)
+      const response = await simulationsApi.getAgents(id)
       setAgents(response.data.results || response.data)
     } catch (error) {
       console.error('Error loading agents:', error)
     }
-  }
+  }, [id])
 
-  const loadTasks = async () => {
+  const loadTasks = useCallback(async () => {
+    if (!id) return
     try {
-      const response = await simulationsApi.getTasks(id!)
+      const response = await simulationsApi.getTasks(id)
       setTasks(response.data.results || response.data)
     } catch (error) {
       console.error('Error loading tasks:', error)
     }
-  }
+  }, [id])
+
+  useEffect(() => {
+    if (id) {
+      loadSimulation()
+      loadAgents()
+      loadTasks()
+    }
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.disconnect()
+        wsRef.current = null
+      }
+      // Clear all animation timeouts
+      animationTimeoutRef.current.forEach(timeout => clearTimeout(timeout))
+    }
+  }, [id, loadSimulation, loadAgents, loadTasks])
 
   const handleStartSimulation = async () => {
     if (!id) return
@@ -121,7 +124,7 @@ export default function SimulationDetail() {
     }
   }
 
-  const startAnimation = (animation: ActiveAnimation) => {
+  const startAnimation = useCallback((animation: ActiveAnimation) => {
     setActiveAnimations(prev => {
       const newMap = new Map(prev)
       newMap.set(animation.id, animation)
@@ -139,13 +142,15 @@ export default function SimulationDetail() {
     }, animation.duration)
 
     animationTimeoutRef.current.set(animation.id, timeout)
-  }
+  }, [])
 
   const handleStepUpdate = useCallback((data: any) => {
+    console.log('handleStepUpdate called with:', data)
     setCurrentStep(data.step || 0)
 
     // Update agents
     if (data.agents && Array.isArray(data.agents)) {
+      console.log('Processing agents:', data.agents)
       setAgents(prevAgents => {
         const updatedAgents = data.agents
           .map((agentData: any) => {
@@ -160,6 +165,7 @@ export default function SimulationDetail() {
                 existingAgent.position_z !== undefined &&
                 agentData.position &&
                 Array.isArray(agentData.position) &&
+                agentData.position.length >= 2 &&
                 (existingAgent.position_x !== agentData.position[0] ||
                  existingAgent.position_z !== agentData.position[1])) {
               const animation: ActiveAnimation = {
@@ -208,27 +214,28 @@ export default function SimulationDetail() {
           return null
         }
         
-            return {
-              id: agentId,
-              agent_id: agentId,
-              world: existingAgentData?.world || '',
-              agent_type: agentType,
-              is_active: existingAgentData?.is_active ?? true,
-              position_x: agentData.position[0],
-              position_z: agentData.position[1],
-              status: agentData.status || 'idle',
-              tasks_completed: agentData.tasks_completed || 0,
-              fields_fumigated: agentData.fields_fumigated || 0,
-              metadata: {
-                pesticide_level: agentData.pesticide_level || 0,
-              },
-              created_at: existingAgentData?.created_at || new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            } as Agent
-          })
-          .filter((agent: Agent | null): agent is Agent => agent !== null)
-        
-        return updatedAgents
+        return {
+          id: agentId,
+          agent_id: agentId,
+          world: existingAgentData?.world || '',
+          agent_type: agentType,
+          is_active: existingAgentData?.is_active ?? true,
+          position_x: agentData.position[0],
+          position_z: agentData.position[1],
+          status: agentData.status || 'idle',
+          tasks_completed: agentData.tasks_completed || 0,
+          fields_fumigated: agentData.fields_fumigated || 0,
+          metadata: {
+            pesticide_level: agentData.pesticide_level || 0,
+          },
+          created_at: existingAgentData?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        } as Agent
+      })
+      .filter((agent: Agent | null): agent is Agent => agent !== null)
+      
+      console.log('Updated agents:', updatedAgents)
+      return updatedAgents
       })
     }
 
@@ -249,7 +256,10 @@ export default function SimulationDetail() {
 
     // Update infestation grid
     if (data.infestation_grid) {
+      console.log('Updating infestation grid:', data.infestation_grid)
       setInfestationGrid(data.infestation_grid)
+    } else {
+      console.log('No infestation_grid in data')
     }
 
     // Fase siempre es fumigation desde el inicio (scouts eliminados)
@@ -259,7 +269,7 @@ export default function SimulationDetail() {
       }
       return prev
     })
-  }, [])
+  }, [startAnimation])
 
   const connectWebSocket = useCallback(() => {
     if (!id) return
@@ -312,6 +322,20 @@ export default function SimulationDetail() {
     }
   }, [simulation?.status, connectWebSocket])
 
+  // Inicializar todas las celdas como reveladas desde el inicio (solo una vez)
+  useEffect(() => {
+    if (world && !cellsInitializedRef.current) {
+      const allCells = new Set<string>()
+      for (let z = 0; z < world.height; z++) {
+        for (let x = 0; x < world.width; x++) {
+          allCells.add(`${x},${z}`)
+        }
+      }
+      setRevealedCells(allCells)
+      cellsInitializedRef.current = true
+    }
+  }, [world])
+
   if (loading && !simulation) {
     return (
       <div className="container">
@@ -331,20 +355,6 @@ export default function SimulationDetail() {
   const fumigatorAgents = agents.filter(a => a.agent_type === 'fumigator')
   const completedTasks = tasks.filter(t => t.status === 'completed').length
   const totalTasks = tasks.length
-  
-  // Inicializar todas las celdas como reveladas desde el inicio (solo una vez)
-  useEffect(() => {
-    if (world && !cellsInitializedRef.current) {
-      const allCells = new Set<string>()
-      for (let z = 0; z < world.height; z++) {
-        for (let x = 0; x < world.width; x++) {
-          allCells.add(`${x},${z}`)
-        }
-      }
-      setRevealedCells(allCells)
-      cellsInitializedRef.current = true
-    }
-  }, [world])
 
   return (
     <div className="container simulation-detail">
