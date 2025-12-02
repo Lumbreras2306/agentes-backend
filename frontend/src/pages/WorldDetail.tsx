@@ -23,16 +23,6 @@ interface AnimationData {
     color: string
   }>>
   tractor_colors: string[]
-  drone_path?: number[][]
-  drone_destination?: number[]
-  drone_simulation_steps?: Array<{
-    position: number[]
-    path_index: number
-    arrived: boolean
-    color: string
-    revealed_infestation?: Record<string, number> // { "x,z": nivel }
-  }>
-  drone_color?: string
   infestation_grid?: number[][]
   tile_colors: {
     IMPASSABLE: string
@@ -271,10 +261,6 @@ export default function WorldDetail() {
                   destinations={animationData.destinations}
                   simulationSteps={animationData.simulation_steps}
                   tractorColors={animationData.tractor_colors}
-                  dronePath={animationData.drone_path}
-                  droneDestination={animationData.drone_destination}
-                  droneSimulationSteps={animationData.drone_simulation_steps}
-                  droneColor={animationData.drone_color}
                   infestationGrid={animationData.infestation_grid}
                   tileColors={animationData.tile_colors}
                   speed={animationSpeed}

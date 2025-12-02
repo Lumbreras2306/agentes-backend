@@ -372,14 +372,15 @@ class WorldViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def visualize_dijkstra_animated(self, request, pk=None):
         """
-        Retorna datos JSON para animación de múltiples tractores y un dron moviéndose a puntos infestados.
+        Retorna datos JSON para animación de múltiples tractores moviéndose a puntos infestados.
         El frontend se encarga de generar la animación.
-        
+        Todos los campos son revelados al inicio de la simulación.
+
         GET /api/worlds/{id}/visualize_dijkstra_animated/
         GET /api/worlds/{id}/visualize_dijkstra_animated/?tractors=3
         Parámetros:
         - tractors: Número de tractores (default: 3, rango: 1-5)
-        
+
         Returns:
         JSON con:
         - grid: Grid del mundo
@@ -388,18 +389,14 @@ class WorldViewSet(viewsets.ModelViewSet):
         - tractor_paths: Lista de caminos, uno por cada tractor
         - destinations: Lista de destinos (x, z), uno por cada tractor
         - simulation_steps: Lista de pasos de simulación (tractores)
-        - drone_path: Camino del dron
-        - drone_destination: Destino del dron
-        - drone_simulation_steps: Pasos de simulación del dron
         - tractor_colors: Lista de colores hex para cada tractor
-        - drone_color: Color del dron
         """
         world = self.get_object()
-        
+
         # Obtener número de tractores (máximo 5, uno por celda del granero)
         num_tractors = int(request.query_params.get('tractors', 3))
         num_tractors = max(1, min(5, num_tractors))  # Entre 1 y 5
-        
+
         # Crear pathfinder y encontrar caminos para múltiples tractores a puntos infestados
         pathfinder = Pathfinder(world.grid, world.width, world.height)
         tractor_paths_data = pathfinder.find_paths_to_infested_destinations(
@@ -407,64 +404,34 @@ class WorldViewSet(viewsets.ModelViewSet):
             num_tractors=num_tractors,
             prefer_roads=True
         )
-        
+
         if tractor_paths_data is None or len(tractor_paths_data) == 0:
             return Response(
                 {'error': 'No se pudieron encontrar caminos válidos'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
         # Extraer caminos y destinos de tractores
         tractor_paths = [data['path'] for data in tractor_paths_data]
         destinations = [data['end'] for data in tractor_paths_data]
         # Usar la posición central del granero para visualización (primer tractor)
         barn_pos = tractor_paths_data[0]['start']
-        
+
         # Simular movimiento de tractores
         simulation_steps = pathfinder.simulate_tractors(tractor_paths, max_steps=2000)
-        
+
         if not simulation_steps:
             return Response(
                 {'error': 'No se pudo simular el movimiento'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-        # Configurar el dron: sobrevuela todo el mapa para analizar infestación
-        barn_cells = pathfinder.find_all_barn_cells()
-        drone_start = barn_cells[0] if barn_cells else pathfinder.find_barn()
-        
-        if drone_start is None:
-            return Response(
-                {'error': 'No se pudo encontrar posición inicial para el dron'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
-        # Generar patrón de sobrevuelo para el dron
-        drone_path = pathfinder.generate_drone_survey_path(drone_start)
-        
-        if not drone_path:
-            return Response(
-                {'error': 'No se pudo generar patrón de sobrevuelo para el dron'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
-        # Simular movimiento del dron (más rápido, sin colisiones, revela infestación)
-        drone_simulation_steps = pathfinder.simulate_drone(
-            drone_path, 
-            infestation_grid=world.infestation_grid,
-            speed_multiplier=2, 
-            max_steps=2000
-        )
-        
-        # El destino del dron es el último punto del sobrevuelo
-        drone_destination = drone_path[-1] if drone_path else None
-        
+
         # Colores para cada tractor
         tractor_colors = [
             '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff',
             '#00ffff', '#ff8800', '#8800ff', '#88ff00', '#ff0088'
         ]
-        
+
         # Preparar respuesta JSON
         response_data = {
             'grid': world.grid,
@@ -475,11 +442,7 @@ class WorldViewSet(viewsets.ModelViewSet):
             'destinations': destinations,
             'simulation_steps': simulation_steps,
             'tractor_colors': tractor_colors[:num_tractors],
-            'drone_path': drone_path,
-            'drone_destination': drone_destination,
-            'drone_simulation_steps': drone_simulation_steps,
-            'drone_color': '#00ffff',  # Cyan para el dron
-            'infestation_grid': world.infestation_grid,  # Grid completo de infestación
+            'infestation_grid': world.infestation_grid,  # Grid completo de infestación (todos los campos revelados)
             'tile_colors': {
                 'IMPASSABLE': '#2d2d2d',
                 'ROAD': '#8b7355',
@@ -487,5 +450,5 @@ class WorldViewSet(viewsets.ModelViewSet):
                 'BARN': '#c44536',
             }
         }
-        
+
         return Response(response_data)
