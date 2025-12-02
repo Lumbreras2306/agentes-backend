@@ -7,14 +7,12 @@ Blackboard-based system.
 
 import threading
 import time
-from typing import Optional
-from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
 from django.utils import timezone
 
 from .model import FumigationModel
 from agents.models import Simulation
 from agents.services import BlackboardService
+from agents.communication.broadcaster import StateBroadcaster
 
 
 def run_simulation(
@@ -69,8 +67,8 @@ def run_simulation(
         # If setup() wasn't called, call it manually
         model.setup()
 
-    # Channel layer for WebSocket updates
-    channel_layer = get_channel_layer() if send_updates else None
+    # Broadcaster to send Unity-compatible messages via WebSocket
+    broadcaster = StateBroadcaster(simulation_id) if send_updates else None
 
     try:
         # Run simulation
@@ -79,8 +77,8 @@ def run_simulation(
             model.step()
 
             # Send WebSocket update
-            if channel_layer:
-                _send_step_update(channel_layer, simulation_id, model)
+            if broadcaster:
+                _send_step_update(broadcaster, model)
 
             # Update simulation in database
             simulation.steps_executed = model.total_steps
@@ -116,8 +114,8 @@ def run_simulation(
         simulation.save()
 
         # Send completion message
-        if channel_layer:
-            _send_completion(channel_layer, simulation_id, model, simulation)
+        if broadcaster:
+            _send_completion(broadcaster, model, simulation)
 
         return stats
 
@@ -127,8 +125,8 @@ def run_simulation(
         simulation.save()
 
         # Send error message
-        if channel_layer:
-            _send_error(channel_layer, simulation_id, str(e))
+        if broadcaster:
+            _send_error(broadcaster, str(e))
 
         raise
 
@@ -151,8 +149,8 @@ def run_simulation_async(simulation_id: str, **kwargs):
     return thread
 
 
-def _send_step_update(channel_layer, simulation_id: str, model: FumigationModel):
-    """Send step update via WebSocket"""
+def _send_step_update(broadcaster: StateBroadcaster, model: FumigationModel):
+    """Send step update via WebSocket using the Unity-compatible protocol."""
     stats = model.get_status()
 
     # Get agent states
@@ -181,57 +179,26 @@ def _send_step_update(channel_layer, simulation_id: str, model: FumigationModel)
             'assigned_agent_id': task.assigned_agent_id,
         })
 
-    message = {
-        'type': 'step_update',
-        'step': model.total_steps,
-        'agents': agents_data,
-        'tasks': tasks_data,
-        'statistics': stats,
-        'infestation_grid': model.blackboard.knowledge_base.world_state.infestation_grid,
-    }
-
-    async_to_sync(channel_layer.group_send)(
-        f'simulation_{simulation_id}',
-        {
-            'type': 'simulation_update',
-            'data': message,
-        }
+    broadcaster.send_step_update(
+        step=model.total_steps,
+        agents=agents_data,
+        tasks=tasks_data,
+        statistics=stats,
+        infestation_grid=model.blackboard.knowledge_base.world_state.infestation_grid,
     )
 
 
-def _send_completion(channel_layer, simulation_id: str, model: FumigationModel, simulation):
-    """Send completion message via WebSocket"""
+def _send_completion(broadcaster: StateBroadcaster, model: FumigationModel, simulation):
+    """Send completion message via WebSocket using the Unity-compatible protocol."""
     stats = model.get_status()
 
-    message = {
-        'type': 'simulation_completed',
-        'simulation_id': str(simulation_id),
-        'total_steps': model.total_steps,
-        'statistics': stats,
-        'results': simulation.results,
-    }
-
-    async_to_sync(channel_layer.group_send)(
-        f'simulation_{simulation_id}',
-        {
-            'type': 'simulation_status',
-            'data': message,
-        }
+    broadcaster.send_simulation_completed(
+        total_steps=model.total_steps,
+        statistics=stats,
+        results=simulation.results,
     )
 
 
-def _send_error(channel_layer, simulation_id: str, error_message: str):
-    """Send error message via WebSocket"""
-    message = {
-        'type': 'simulation_error',
-        'simulation_id': str(simulation_id),
-        'error': error_message,
-    }
-
-    async_to_sync(channel_layer.group_send)(
-        f'simulation_{simulation_id}',
-        {
-            'type': 'simulation_error',
-            'data': message,
-        }
-    )
+def _send_error(broadcaster: StateBroadcaster, error_message: str):
+    """Send error message via WebSocket using the Unity-compatible protocol."""
+    broadcaster.send_error(error_message)

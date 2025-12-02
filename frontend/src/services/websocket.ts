@@ -11,6 +11,7 @@ export type SimulationUpdateType =
   | 'simulation_error'
   | 'agent_command'
   | 'pong'
+  | 'status_response'
 
 export interface SimulationUpdate {
   type: SimulationUpdateType
@@ -18,8 +19,9 @@ export interface SimulationUpdate {
   step?: number
   status?: string
   agents?: Array<{
-    id: string
-    type: 'scout' | 'fumigator'
+    agent_id?: string
+    id?: string
+    agent_type: 'fumigator'
     position: [number, number]
     status: string
     pesticide_level?: number
@@ -31,8 +33,6 @@ export interface SimulationUpdate {
       position_z: number
       infestation_level: number
     } | null
-    fields_analyzed?: number
-    discoveries?: number
   }>
   tasks?: Array<{
     id: string
@@ -68,7 +68,7 @@ export interface SimulationUpdate {
     discoveries?: number
   }
   message?: string
-  timestamp?: number
+  timestamp?: number | string
 }
 
 export class SimulationWebSocket {

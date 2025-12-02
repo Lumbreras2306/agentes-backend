@@ -59,7 +59,8 @@ class SimulationViewSet(viewsets.ModelViewSet):
         
         world_id = serializer.validated_data['world_id']
         num_fumigators = serializer.validated_data.get('num_fumigators', 3)
-        num_scouts = serializer.validated_data.get('num_scouts', 2)
+        # Scouts eliminados: forzamos 0 y calculamos agentes solo con fumigadores
+        num_scouts = 0
         max_steps = serializer.validated_data.get('max_steps', 1000)
         min_infestation = serializer.validated_data.get('min_infestation', 10)
         
@@ -72,7 +73,7 @@ class SimulationViewSet(viewsets.ModelViewSet):
         
         simulation = Simulation.objects.create(
             world=world,
-            num_agents=num_fumigators + num_scouts,
+            num_agents=num_fumigators,
             num_fumigators=num_fumigators,
             num_scouts=num_scouts,
             max_steps=max_steps,
@@ -128,7 +129,6 @@ class SimulationViewSet(viewsets.ModelViewSet):
         # Obtener parámetros de la simulación
         world = simulation.world
         num_fumigators = simulation.num_fumigators
-        num_scouts = simulation.num_scouts
         max_steps = simulation.max_steps
         min_infestation = 10  # Valor por defecto
         

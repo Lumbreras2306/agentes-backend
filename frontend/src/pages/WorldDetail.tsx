@@ -148,7 +148,7 @@ export default function WorldDetail() {
       x: agent.position_x!,
       z: agent.position_z!,
       color: agentColors[idx % agentColors.length],
-      label: agent.agent_type === 'fumigator' ? 'F' : 'S',
+      label: 'F',
     }))
 
   const visualizationTasks = tasks
@@ -293,7 +293,7 @@ export default function WorldDetail() {
                       style={{ background: agentColors[idx % agentColors.length] }}
                     />
                     <div className="agent-info">
-                      <strong>{agent.agent_type === 'fumigator' ? 'Fumigador' : 'Scout'}</strong>
+                      <strong>Fumigador</strong>
                       <span>
                         {agent.position_x !== null && agent.position_z !== null
                           ? `(${agent.position_x}, ${agent.position_z})`

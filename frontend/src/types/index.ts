@@ -23,7 +23,7 @@ export interface Agent {
   id: string
   agent_id: string
   world: string
-  agent_type: 'fumigator' | 'scout'
+  agent_type: 'fumigator'
   is_active: boolean
   position_x?: number
   position_z?: number
@@ -40,7 +40,7 @@ export interface Simulation {
   world: string
   num_agents: number
   num_fumigators: number
-  num_scouts: number
+  num_scouts?: number
   max_steps: number
   status: 'pending' | 'running' | 'completed' | 'failed'
   steps_executed: number

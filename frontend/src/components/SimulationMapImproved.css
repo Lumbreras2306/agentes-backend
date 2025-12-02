@@ -93,10 +93,6 @@
   color: #333;
 }
 
-.status-value.scout {
-  color: #00ffff;
-}
-
 .status-value.fumigator {
   color: #3b82f6;
 }
@@ -114,10 +110,6 @@
   margin-top: 10px;
 }
 
-.phase-indicator.exploration {
-  background: rgba(0, 255, 255, 0.2);
-  color: #00b8b8;
-}
 
 .phase-indicator.fumigation {
   background: rgba(59, 130, 246, 0.2);

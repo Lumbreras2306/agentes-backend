@@ -6,7 +6,7 @@ Defines structured messages for communication between Django backend and Unity c
 
 from enum import Enum
 from typing import Dict, Any, List, Optional
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime
 
 
@@ -64,7 +64,9 @@ class Message:
     """Base message class"""
     type: str
     timestamp: str
-    version: str = "2.0"
+    # Mark version as init=False to avoid ordering issues in subclasses that add
+    # required fields after this defaulted value.
+    version: str = field(default="2.0", init=False)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
