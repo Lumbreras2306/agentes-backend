@@ -41,7 +41,7 @@ export default function Home() {
         >
           <div className="feature-icon">🤖</div>
           <h3>Simulaciones</h3>
-          <p>Ejecuta simulaciones con agentes fumigadores y scouts coordinados</p>
+          <p>Ejecuta simulaciones con tractores fumigadores coordinados</p>
           <Link to="/simulations" className="btn btn-primary">
             Ver Simulaciones
           </Link>

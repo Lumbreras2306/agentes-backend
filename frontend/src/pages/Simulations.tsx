@@ -16,7 +16,6 @@ export default function Simulations() {
   const [formData, setFormData] = useState({
     world_id: '',
     num_fumigators: 5,
-    num_scouts: 1,
     max_steps: 300,
     min_infestation: 10,
   })
@@ -59,7 +58,6 @@ export default function Simulations() {
       setFormData({
         world_id: worlds[0]?.id || '',
         num_fumigators: 5,
-        num_scouts: 1,
         max_steps: 300,
         min_infestation: 10,
       })
@@ -148,19 +146,6 @@ export default function Simulations() {
               />
             </div>
             <div className="form-group">
-              <label>Scouts</label>
-              <input
-                type="number"
-                min="1"
-                max="10"
-                value={formData.num_scouts}
-                onChange={(e) =>
-                  setFormData({ ...formData, num_scouts: parseInt(e.target.value) })
-                }
-                required
-              />
-            </div>
-            <div className="form-group">
               <label>Máximo de Pasos</label>
               <input
                 type="number"
@@ -230,9 +215,7 @@ export default function Simulations() {
                 <div className="simulation-stats">
                   <div className="stat">
                     <span className="stat-label">Agentes:</span>
-                    <span className="stat-value">
-                      {simulation.num_fumigators} F + {simulation.num_scouts} S
-                    </span>
+                    <span className="stat-value">{simulation.num_fumigators} F</span>
                   </div>
                   <div className="stat">
                     <span className="stat-label">Pasos:</span>

@@ -151,7 +151,7 @@ export default function SimulationDetail() {
           .map((agentData: any) => {
             // El backend envía 'agent_id' y 'agent_type', pero también puede enviar 'id' y 'type'
             const agentId = agentData.agent_id || agentData.id
-            const agentType = agentData.agent_type || agentData.type
+            const agentType = agentData.agent_type || 'fumigator'
             const existingAgent = prevAgents.find(a => a.agent_id === agentId || a.id === agentId)
 
             // Create animation for movement
@@ -212,7 +212,7 @@ export default function SimulationDetail() {
               id: agentId,
               agent_id: agentId,
               world: existingAgentData?.world || '',
-              agent_type: agentType || 'fumigator',
+              agent_type: agentType,
               is_active: existingAgentData?.is_active ?? true,
               position_x: agentData.position[0],
               position_z: agentData.position[1],

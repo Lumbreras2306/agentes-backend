@@ -30,9 +30,8 @@ const TILE_COLORS = {
   BARN: '#c44536',        // Rojo - granero
 }
 
-// Colores únicos para agentes
+// Color único para agentes fumigadores (no hay scouts)
 const FUMIGATOR_COLOR = '#3b82f6' // Azul - fumigador
-const SCOUT_COLOR = '#00ffff'     // Cyan - scout
 
 // Función helper para ajustar brillo
 function adjustBrightness(color: string, factor: number): string {
@@ -132,9 +131,7 @@ export default function SimulationMap({
         const agent = agents.find(a => a.id === agentId)
         if (!agent) return
 
-        const agentColor = agent.agent_type === 'fumigator'
-          ? FUMIGATOR_COLOR
-          : SCOUT_COLOR
+        const agentColor = FUMIGATOR_COLOR
 
         ctx.fillStyle = agentColor
         ctx.globalAlpha = 0.2
@@ -167,9 +164,7 @@ export default function SimulationMap({
         if (task.status === 'assigned' || task.status === 'in_progress') {
           const assignedAgent = agents.find(a => a.id === task.assigned_agent_id)
           if (assignedAgent) {
-            taskColor = assignedAgent.agent_type === 'fumigator'
-              ? FUMIGATOR_COLOR
-              : SCOUT_COLOR
+            taskColor = FUMIGATOR_COLOR
           } else {
             taskColor = '#f59e0b' // Amarillo - Asignada
           }
@@ -256,10 +251,8 @@ export default function SimulationMap({
         const zPos = offsetZ + displayZ * cellSize + cellSize / 2
         const radius = cellSize * 0.35
 
-        // Color según tipo de agente
-        let fillColor = agent.agent_type === 'fumigator'
-          ? FUMIGATOR_COLOR
-          : SCOUT_COLOR
+        // Color único para agentes fumigadores
+        let fillColor = FUMIGATOR_COLOR
 
         // Ajustar color según estado
         if (agent.status === 'idle') {
@@ -268,39 +261,15 @@ export default function SimulationMap({
           fillColor = adjustBrightness(fillColor, -0.3)
         }
 
-        // Dibujar agente
-        if (agent.agent_type === 'scout') {
-          // Scout como hexágono
-          const size = cellSize * 0.3
-          ctx.fillStyle = fillColor
-          ctx.beginPath()
-          for (let i = 0; i < 6; i++) {
-            const angle = (Math.PI / 3) * i - Math.PI / 2
-            const px = xPos + size * Math.cos(angle)
-            const pz = zPos + size * Math.sin(angle)
-            if (i === 0) {
-              ctx.moveTo(px, pz)
-            } else {
-              ctx.lineTo(px, pz)
-            }
-          }
-          ctx.closePath()
-          ctx.fill()
+        // Dibujar agente (solo tractores)
+        ctx.fillStyle = fillColor
+        ctx.beginPath()
+        ctx.arc(xPos, zPos, radius, 0, Math.PI * 2)
+        ctx.fill()
 
-          ctx.strokeStyle = '#000000'
-          ctx.lineWidth = 2
-          ctx.stroke()
-        } else {
-          // Fumigador como círculo
-          ctx.fillStyle = fillColor
-          ctx.beginPath()
-          ctx.arc(xPos, zPos, radius, 0, Math.PI * 2)
-          ctx.fill()
-
-          ctx.strokeStyle = '#000000'
-          ctx.lineWidth = 2
-          ctx.stroke()
-        }
+        ctx.strokeStyle = '#000000'
+        ctx.lineWidth = 2
+        ctx.stroke()
 
         // Actualizar camino recorrido
         const posKey = `${Math.round(displayX)},${Math.round(displayZ)}`
@@ -358,10 +327,6 @@ export default function SimulationMap({
             <div className="legend-item">
               <div className="legend-color fumigator" style={{ backgroundColor: FUMIGATOR_COLOR }}></div>
               <span>Fumigador (Azul)</span>
-            </div>
-            <div className="legend-item">
-              <div className="legend-color scout" style={{ backgroundColor: SCOUT_COLOR }}></div>
-              <span>Scout (Cyan)</span>
             </div>
           </div>
           <div className="legend-section">
