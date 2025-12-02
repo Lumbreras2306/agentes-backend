@@ -254,10 +254,6 @@
   color: var(--dark);
 }
 
-.status-value.scout {
-  color: #00bcd4;
-}
-
 .status-value.fumigator {
   color: #2196f3;
 }
@@ -335,10 +331,6 @@
   padding: 1rem;
   border-radius: 0.5rem;
   border-left: 4px solid var(--primary);
-}
-
-.agent-card.agent-scout {
-  border-left-color: #00bcd4;
 }
 
 .agent-card.agent-fumigator {

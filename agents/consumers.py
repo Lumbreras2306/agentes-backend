@@ -4,11 +4,11 @@ Permite que los clientes (frontend React y Unity) se conecten y reciban actualiz
 de la simulación en tiempo real.
 """
 import json
-import asyncio
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.shortcuts import get_object_or_404
 from .models import Simulation
+from agents.communication.protocol import UnityProtocol
 
 
 class SimulationConsumer(AsyncWebsocketConsumer):
@@ -37,13 +37,9 @@ class SimulationConsumer(AsyncWebsocketConsumer):
         )
         
         await self.accept()
-        
-        # Enviar mensaje de conexión exitosa
-        await self.send(text_data=json.dumps({
-            'type': 'connection',
-            'message': 'Conectado a la simulación',
-            'simulation_id': str(self.simulation_id)
-        }))
+
+        # Enviar mensaje de conexión exitosa (compatible con Unity/frontend)
+        await self.send(text_data=json.dumps(UnityProtocol.connection(str(self.simulation_id))))
     
     async def disconnect(self, close_code):
         """Se ejecuta cuando un cliente se desconecta"""
@@ -61,10 +57,7 @@ class SimulationConsumer(AsyncWebsocketConsumer):
             
             if message_type == 'ping':
                 # Responder a ping con pong
-                await self.send(text_data=json.dumps({
-                    'type': 'pong',
-                    'timestamp': data.get('timestamp')
-                }))
+                await self.send(text_data=json.dumps(UnityProtocol.pong(data.get('timestamp'))))
             elif message_type == 'get_status':
                 # Enviar estado actual de la simulación
                 simulation = await self.get_simulation(self.simulation_id)
@@ -87,10 +80,7 @@ class SimulationConsumer(AsyncWebsocketConsumer):
                         'success': success
                     }))
         except json.JSONDecodeError:
-            await self.send(text_data=json.dumps({
-                'type': 'error',
-                'message': 'Formato JSON inválido'
-            }))
+            await self.send(text_data=json.dumps(UnityProtocol.error('Formato JSON inválido')))
     
     # Handler para mensajes del grupo
     async def simulation_update(self, event):
@@ -113,9 +103,8 @@ class SimulationConsumer(AsyncWebsocketConsumer):
     async def send_simulation_status(self, simulation):
         """Envía el estado actual de la simulación"""
         from .serializers import SimulationSerializer
-        
+
         serializer = SimulationSerializer(simulation)
-        await self.send(text_data=json.dumps({
-            'type': 'simulation_status',
-            'data': serializer.data
-        }))
+        await self.send(text_data=json.dumps(
+            UnityProtocol.status_response(str(self.simulation_id), serializer.data)
+        ))

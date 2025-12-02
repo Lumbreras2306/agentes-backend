@@ -5,7 +5,7 @@ Frontend desarrollado con React + TypeScript + Vite para visualizar y gestionar 
 ## Características
 
 - 🌍 **Gestión de Mundos**: Crear, visualizar y gestionar mundos con campos, caminos e infestación
-- 🤖 **Simulaciones**: Ejecutar y monitorear simulaciones con agentes fumigadores y scouts
+- 🤖 **Simulaciones**: Ejecutar y monitorear simulaciones con agentes fumigadores (sin drones ni scouts)
 - 🎬 **Animaciones**: Visualizar animaciones de pathfinding con múltiples tractores usando Dijkstra
 - 📊 **Visualización en Tiempo Real**: Ver agentes y tareas en el mundo en tiempo real
 - 🎨 **Interfaz Moderna**: UI moderna y responsiva con animaciones suaves

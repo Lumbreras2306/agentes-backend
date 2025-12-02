@@ -21,7 +21,7 @@ interface SimulationMapProps {
   showInfestation?: boolean
   activeAnimations?: Map<string, ActiveAnimation>
   infestationGrid?: number[][]  // Grid de infestación actualizado en tiempo real
-  revealedCells?: Set<string>   // Celdas reveladas por el scout
+  revealedCells?: Set<string>   // Celdas reveladas (todas visibles desde el inicio sin scout)
 }
 
 // Colores para tipos de terreno
