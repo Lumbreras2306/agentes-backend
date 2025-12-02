@@ -44,7 +44,8 @@ class ScoutAgent(ap.Agent):
         
         # Referencias al mundo y blackboard
         self.world_instance = self.model.world_instance
-        self.blackboard = self.model.blackboard_service
+        # El modelo nuevo tiene self.model.blackboard, el legacy tiene self.model.blackboard_service
+        self.blackboard = getattr(self.model, 'blackboard', None) or self.model.blackboard_service
         self.grid = self.world_instance.grid
         self.infestation_grid = self.world_instance.infestation_grid
         self.width = self.world_instance.width
@@ -55,57 +56,164 @@ class ScoutAgent(ap.Agent):
         
         # Lista de campos ya analizados
         self.analyzed_fields = set()
+        
+        # IMPORTANTE: Registrar el agente en el knowledge_base para que aparezca en el frontend
+        # El modelo nuevo tiene model.blackboard.knowledge_base
+        if hasattr(self.model, 'blackboard') and hasattr(self.model.blackboard, 'knowledge_base'):
+            from agents.blackboard.knowledge_base import AgentState
+            agent_state = AgentState(
+                agent_id=str(self.id),
+                agent_type='scout',
+                position=self.position,
+                status=self.status,
+                fields_analyzed=self.fields_analyzed,
+                analyzed_positions=self.analyzed_fields
+            )
+            self.model.blackboard.knowledge_base.register_agent(agent_state)
+        # Si no hay nuevo blackboard, el modelo se encargará de registrar los agentes
     
     def step(self):
-        """Ejecuta un paso del agente scout"""
-        # Buscar campos cercanos no analizados
-        target_field = self._find_unanalyzed_field()
-        
-        if target_field:
-            # Moverse hacia el campo
-            if self.position != target_field:
-                self._move_towards(target_field)
-            else:
-                # Analizar el campo
-                self._analyze_field(target_field)
+        """Ejecuta un paso del agente scout
+
+        Reactive Agent Pattern:
+        1. PERCIBIR: Leer comandos del blackboard (ScoutCoordinatorKS)
+        2. DECIDIR: Determinar acción basada en comando o estado interno
+        3. ACTUAR: Ejecutar movimiento y revelar infestación
+        4. REPORTAR: Actualizar estado en blackboard
+        """
+        # 1. PERCIBIR: Leer comando del blackboard
+        # El nuevo blackboard tiene knowledge_base.get_shared, el legacy tiene métodos diferentes
+        if hasattr(self.blackboard, 'knowledge_base'):
+            command = self.blackboard.knowledge_base.get_shared(f'command_{self.id}')
+        elif hasattr(self.blackboard, 'get_shared'):
+            command = self.blackboard.get_shared(f'command_{self.id}')
         else:
-            # Explorar aleatoriamente
-            self._explore()
+            command = None
+
+        if command and command.get('action') == 'explore_area':
+            # ScoutCoordinatorKS nos envió una posición objetivo
+            target = command.get('target_position')
+
+            if target:
+                target_tuple = tuple(target) if isinstance(target, list) else target
+
+                # Verificar si ya llegamos al objetivo
+                if self.position == target_tuple:
+                    # YA ESTAMOS EN EL OBJETIVO
+                    # Revelar infestación alrededor
+                    self._reveal_infestation_around_position(self.position)
+
+                    # CRÍTICO: Cambiar a 'idle' para recibir siguiente comando
+                    self.status = 'idle'
+
+                    # Limpiar comando procesado
+                    if hasattr(self.blackboard, 'knowledge_base'):
+                        self.blackboard.knowledge_base.set_shared(f'command_{self.id}', None)
+                    elif hasattr(self.blackboard, 'set_shared'):
+                        self.blackboard.set_shared(f'command_{self.id}', None)
+
+                    print(f"🔍 Scout {self.id}: Llegó a {target_tuple}, revelando área, volviendo a idle")
+                else:
+                    # AÚN NO LLEGAMOS, MOVERNOS HACIA EL OBJETIVO
+                    self._move_towards(target_tuple)
+                    self.status = 'scouting'
+            else:
+                # Comando sin objetivo, cambiar a idle
+                self.status = 'idle'
+        else:
+            # No hay comando del blackboard, usar lógica interna
+            # (Fallback para compatibilidad, pero el ScoutCoordinatorKS debería dirigir)
+            target_field = self._find_unanalyzed_field()
+
+            if target_field:
+                # Moverse hacia el campo
+                if self.position != target_field:
+                    self._move_towards(target_field)
+                else:
+                    # Analizar el campo
+                    self._analyze_field(target_field)
+            else:
+                # Explorar aleatoriamente
+                self._explore()
+        
+        # 4. REPORTAR: Siempre actualizar estado en blackboard al final del step
+        # Esto asegura que el frontend reciba la posición actualizada
+        # Intentar acceder al nuevo blackboard primero
+        if hasattr(self.model, 'blackboard') and hasattr(self.model.blackboard, 'knowledge_base'):
+            self.model.blackboard.knowledge_base.update_agent(
+                str(self.id),
+                position=self.position,
+                status=self.status,
+                fields_analyzed=self.fields_analyzed,
+                analyzed_positions=self.analyzed_fields
+            )
+        # Si no hay nuevo blackboard, el modelo se encargará de actualizar
     
     def _find_unanalyzed_field(self) -> Optional[Tuple[int, int]]:
-        """Encuentra un campo cercano no analizado"""
-        # Buscar campos en un radio creciente
-        for radius in range(1, min(self.width, self.height)):
-            candidates = []
-            for dx in range(-radius, radius + 1):
-                for dz in range(-radius, radius + 1):
-                    if abs(dx) + abs(dz) == radius:  # Solo borde del radio
-                        x = self.position[0] + dx
-                        z = self.position[1] + dz
-                        pos = (x, z)
-                        
-                        if (self._is_valid_position(pos) and 
-                            self.grid[z][x] == TileType.FIELD and
-                            pos not in self.analyzed_fields):
-                            candidates.append(pos)
-            
-            if candidates:
-                # Elegir el más cercano
-                return min(candidates, key=lambda p: self._calculate_distance(self.position, p))
+        """Encuentra un campo no analizado usando exploración sistemática
         
-        return None
+        Estrategia: Escanear todos los campos de manera sistemática,
+        fila por fila, sin evitar zonas. Esto evita el comportamiento
+        errático de buscar en radios crecientes.
+        """
+        # Buscar todos los campos no analizados
+        unanalyzed_fields = []
+        for z in range(self.height):
+            for x in range(self.width):
+                if (self.grid[z][x] == TileType.FIELD and 
+                    (x, z) not in self.analyzed_fields):
+                    unanalyzed_fields.append((x, z))
+        
+        if not unanalyzed_fields:
+            return None
+        
+        # Estrategia: Ir al campo más cercano que no haya sido analizado
+        # Esto asegura una exploración más sistemática
+        return min(unanalyzed_fields, key=lambda p: self._calculate_distance(self.position, p))
     
     def _move_towards(self, target: Tuple[int, int], wait_confirmation: bool = True):
-        """Se mueve hacia el objetivo usando pathfinding y revela infestación al pasar"""
+        """Se mueve hacia el objetivo usando pathfinding o movimiento directo
+        
+        Si el objetivo es un campo y está cerca, puede moverse directamente.
+        Si no, usa pathfinding para evitar zonas IMPASSABLE.
+        """
         self.status = 'moving'
         
-        # Usar pathfinding (el scout puede usar cualquier ruta, no le importa el peso)
-        path = self.pathfinder.dijkstra(self.position, target, prefer_roads=False)
-        
-        if path and len(path) > 1:
-            # Moverse al siguiente paso del camino
-            next_pos = path[1]
+        # Si el objetivo es un campo y está a distancia Manhattan 1, moverse directamente
+        distance = self._calculate_distance(self.position, target)
+        if distance == 1 and self.grid[target[1]][target[0]] == TileType.FIELD:
+            # Movimiento directo a campo adyacente
+            next_pos = target
+        else:
+            # Usar pathfinding para distancias mayores
+            path = self.pathfinder.dijkstra(self.position, target, prefer_roads=False)
             
+            if path and len(path) > 1:
+                next_pos = path[1]
+            elif path and len(path) == 1:
+                # Ya estamos en el objetivo
+                next_pos = self.position
+            else:
+                # Pathfinding falló, intentar movimiento directo hacia el objetivo
+                # Solo si es un campo y está cerca (distancia <= 2)
+                if distance <= 2 and self.grid[target[1]][target[0]] == TileType.FIELD:
+                    # Moverse un paso más cerca usando movimiento Manhattan simple
+                    x, z = self.position
+                    tx, tz = target
+                    if abs(tx - x) > abs(tz - z):
+                        # Mover horizontalmente
+                        new_x = x + (1 if tx > x else -1)
+                        next_pos = (new_x, z) if self._is_valid_position((new_x, z)) else self.position
+                    else:
+                        # Mover verticalmente
+                        new_z = z + (1 if tz > z else -1)
+                        next_pos = (x, new_z) if self._is_valid_position((x, new_z)) else self.position
+                else:
+                    # No se puede mover, quedarse en posición actual
+                    next_pos = self.position
+        
+        # Solo moverse si la posición es diferente
+        if next_pos != self.position:
             # Si hay confirmaciones habilitadas, enviar comando y esperar
             if wait_confirmation and hasattr(self.model, 'simulation_id'):
                 command = {
@@ -135,51 +243,98 @@ class ScoutAgent(ap.Agent):
                 # Modo sin confirmaciones (fallback)
                 self.position = next_pos
                 self._reveal_infestation_around_position(next_pos)
+            
+            # IMPORTANTE: Actualizar estado en el knowledge_base para que aparezca en el frontend
+            # Intentar acceder al nuevo blackboard primero
+            if hasattr(self.model, 'blackboard') and hasattr(self.model.blackboard, 'knowledge_base'):
+                self.model.blackboard.knowledge_base.update_agent(
+                    str(self.id),
+                    position=self.position,
+                    status=self.status,
+                    fields_analyzed=self.fields_analyzed,
+                    analyzed_positions=self.analyzed_fields
+                )
+            # Si no hay nuevo blackboard, el modelo se encargará de actualizar
     
     def _reveal_infestation_around_position(self, pos: Tuple[int, int]):
-        """Revela infestación en la posición actual y las filas arriba y abajo (3 filas total)"""
+        """Revela infestación en un área 5x5 alrededor de la posición actual
+
+        Radio de 2 celdas (5x5) permite al scout cubrir más área por escaneo,
+        habilitando un patrón eficiente de bajar 3 filas entre escaneos.
+        Esto permite una revelación progresiva del mapa.
+        """
         x, z = pos
-        
-        # Analizar la fila actual y una arriba y una abajo
-        for dz in [-1, 0, 1]:
-            analyze_z = z + dz
-            if 0 <= analyze_z < self.height:
-                # Analizar toda la fila
-                for analyze_x in range(self.width):
-                    field_pos = (analyze_x, analyze_z)
-                    
-                    # Solo analizar campos (no caminos ni granero)
-                    if self.grid[analyze_z][analyze_x] != TileType.FIELD:
-                        continue
-                    
-                    # Si ya fue analizado, saltar
-                    if field_pos in self.analyzed_fields:
-                        continue
-                    
-                    # Marcar como analizado
-                    self.analyzed_fields.add(field_pos)
-                    self.fields_analyzed += 1
-                    
-                    # Obtener nivel de infestación
-                    infestation = self.infestation_grid[analyze_z][analyze_x]
-                    
-                    # Si hay infestación significativa, crear tarea en el blackboard
-                    if infestation >= self.model.min_infestation:
-                        # Verificar si ya existe una tarea para este campo
-                        existing_task = self.blackboard.get_task_by_position(analyze_x, analyze_z)
-                        
-                        if not existing_task:
-                            # Crear nueva tarea
-                            self.blackboard.create_task(
-                                position_x=analyze_x,
-                                position_z=analyze_z,
-                                infestation_level=infestation,
-                                metadata={
-                                    'crop_type': self.world_instance.crop_grid[analyze_z][analyze_x],
-                                    'discovered_by': str(self.id)
-                                }
-                            )
-                            self.discoveries += 1
+
+        # Radio de revelación ajustado para bajar 3 filas
+        # Radio 2 = área 5x5, cubre z-2, z-1, z, z+1, z+2
+        # Permite escanear filas 0, 3, 6, 9... con cobertura completa
+        reveal_radius = 2
+
+        # Track if we analyzed any new cells
+        newly_analyzed = False
+
+        # Analizar celdas en el radio especificado
+        for dz in range(-reveal_radius, reveal_radius + 1):
+            for dx in range(-reveal_radius, reveal_radius + 1):
+                analyze_x = x + dx
+                analyze_z = z + dz
+
+                # Verificar límites
+                if not (0 <= analyze_x < self.width and 0 <= analyze_z < self.height):
+                    continue
+
+                field_pos = (analyze_x, analyze_z)
+
+                # Solo analizar campos (no caminos ni granero)
+                if self.grid[analyze_z][analyze_x] != TileType.FIELD:
+                    continue
+
+                # Si ya fue analizado, saltar
+                if field_pos in self.analyzed_fields:
+                    continue
+
+                # Marcar como analizado
+                self.analyzed_fields.add(field_pos)
+                self.fields_analyzed += 1
+                newly_analyzed = True
+
+                # Obtener nivel de infestación
+                infestation = self.infestation_grid[analyze_z][analyze_x]
+
+                # DEBUG: Log infestation levels
+                if infestation > 0:
+                    print(f"🐛 Scout {self.id}: Descubrió infestación {infestation}% en ({analyze_x}, {analyze_z})")
+
+                # Si hay infestación significativa, crear tarea en el blackboard
+                if infestation >= self.model.min_infestation:
+                    # Verificar si ya existe una tarea para este campo
+                    existing_task = self.blackboard.get_task_by_position(analyze_x, analyze_z)
+
+                    if not existing_task:
+                        # Crear nueva tarea
+                        self.blackboard.create_task(
+                            position_x=analyze_x,
+                            position_z=analyze_z,
+                            infestation_level=infestation,
+                            metadata={
+                                'crop_type': self.world_instance.crop_grid[analyze_z][analyze_x],
+                                'discovered_by': str(self.id)
+                            }
+                        )
+                        self.discoveries += 1
+
+        # Actualizar blackboard una sola vez después de procesar todas las celdas
+        # El ScoutCoordinatorKS necesita esta información para coordinar la exploración
+        if newly_analyzed:
+            # Actualizar estado en el knowledge_base
+            if hasattr(self.model, 'blackboard') and hasattr(self.model.blackboard, 'knowledge_base'):
+                self.model.blackboard.knowledge_base.update_agent(
+                    str(self.id),
+                    analyzed_positions=self.analyzed_fields,
+                    fields_analyzed=self.fields_analyzed,
+                    position=self.position,
+                    status=self.status
+                )
     
     def _analyze_field(self, field_pos: Tuple[int, int]):
         """Analiza un campo para descubrir su nivel de infestación (legacy, ahora usa _reveal_infestation_around_position)"""
@@ -187,8 +342,8 @@ class ScoutAgent(ap.Agent):
         self.status = 'scouting'
     
     def _explore(self):
-        """Explora el mundo cuando no hay campos cercanos"""
-        # Moverse aleatoriamente hacia campos no analizados
+        """Explora el mundo de manera sistemática"""
+        # Buscar todos los campos no analizados
         unanalyzed = []
         for z in range(self.height):
             for x in range(self.width):
@@ -197,8 +352,8 @@ class ScoutAgent(ap.Agent):
                     unanalyzed.append((x, z))
         
         if unanalyzed:
-            # Elegir uno aleatorio
-            target = self.random.choice(unanalyzed)
+            # Ir al más cercano en lugar de aleatorio para exploración sistemática
+            target = min(unanalyzed, key=lambda p: self._calculate_distance(self.position, p))
             self._move_towards(target)
         else:
             # Todos los campos analizados, moverse aleatoriamente
@@ -217,13 +372,19 @@ class ScoutAgent(ap.Agent):
         return neighbors
     
     def _is_valid_position(self, pos: Tuple[int, int]) -> bool:
-        """Verifica si una posición es válida y transitable"""
+        """Verifica si una posición es válida y transitable
+        
+        Para el scout, solo necesita ser un campo (FIELD) para poder escanearlo.
+        Puede moverse a través de cualquier celda transitable para llegar a campos.
+        """
         x, z = pos
         if not (0 <= x < self.width and 0 <= z < self.height):
             return False
         
         tile = self.grid[z][x]
-        return tile in (TileType.ROAD, TileType.FIELD, TileType.BARN)
+        # Scout puede moverse por cualquier celda transitable (no IMPASSABLE)
+        # pero solo escanea campos (FIELD)
+        return tile != TileType.IMPASSABLE
     
     def _calculate_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calcula distancia Manhattan entre dos posiciones"""
@@ -440,23 +601,34 @@ class FumigatorAgent(ap.Agent):
             if self.grid[z][x] == TileType.FIELD:
                 # Aumentar peso exponencialmente cada vez que se pisa
                 current_weight = self.field_weights.get(next_pos, 0.0)
-                
+
                 if current_weight == 0.0:
                     self.field_weights[next_pos] = 5.0
                 else:
                     exponential_factor = 1.8
                     self.field_weights[next_pos] = current_weight * exponential_factor
-                
-                # Verificar si necesita fumigar la celda (mientras se mueve)
-                if self.infestation_grid[z][x] > 0 and self.pesticide_level > 0:
-                    should_fumigate = True
-                    infestation_level = self.infestation_grid[z][x]
-                    pesticide_needed = min(infestation_level, self.pesticide_level)
-                    fumigation_data = {
-                        'infestation_level': infestation_level,
-                        'pesticide_needed': pesticide_needed,
-                        'position': [x, z]
-                    }
+
+                # FUMIGACIÓN OPORTUNISTA: Fumigar celdas con tareas en el camino
+                # Solo fumigar si:
+                # 1. Tiene pesticida disponible
+                # 2. La celda tiene una tarea asignada o pendiente en el blackboard
+                # 3. La celda tiene infestación > 0
+                if self.pesticide_level > 0:
+                    # Verificar si hay una tarea para esta posición
+                    task_at_position = self.blackboard.get_task_by_position(x, z)
+
+                    if task_at_position and self.infestation_grid[z][x] > 0:
+                        # Hay una tarea pendiente o asignada aquí, ¡fumigar!
+                        should_fumigate = True
+                        infestation_level = self.infestation_grid[z][x]
+                        pesticide_needed = min(infestation_level, self.pesticide_level)
+                        fumigation_data = {
+                            'infestation_level': infestation_level,
+                            'pesticide_needed': pesticide_needed,
+                            'position': [x, z],
+                            'task_id': task_at_position.id if task_at_position else None,
+                            'opportunistic': True  # Marcador de fumigación oportunista
+                        }
             
             # Si hay confirmaciones habilitadas, enviar comando y esperar
             if wait_confirmation and hasattr(self.model, 'simulation_id') and self.model.simulation_id:
@@ -490,21 +662,26 @@ class FumigatorAgent(ap.Agent):
         """Ejecuta el movimiento y fumigación si es necesario"""
         x, z = next_pos
         self.position = next_pos
-        
+
         # Ejecutar fumigación si es necesario
         if fumigation_data:
             infestation_level = fumigation_data['infestation_level']
             pesticide_needed = fumigation_data['pesticide_needed']
-            
+            is_opportunistic = fumigation_data.get('opportunistic', False)
+
             self.pesticide_level -= pesticide_needed
             self.infestation_grid[z][x] = max(0, infestation_level - pesticide_needed)
-            
+
             # Si se completó la fumigación de esta celda, crear/completar tarea si existe
             if self.infestation_grid[z][x] == 0:
                 task = self.blackboard.get_task_by_position(x, z)
                 if task:
                     self.blackboard.complete_task(task)
                     self.fields_fumigated += 1
+
+                    # Log de fumigación oportunista para debugging
+                    if is_opportunistic:
+                        print(f"🎯 Fumigator {self.id}: Fumigación oportunista en ({x}, {z}) - Tarea {task.id} completada")
     
     def _complete_task(self):
         """Completa la tarea actual y consume pesticida"""

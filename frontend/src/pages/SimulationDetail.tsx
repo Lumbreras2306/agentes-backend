@@ -3,9 +3,20 @@ import { useParams, Link } from 'react-router-dom'
 import { simulationsApi, worldsApi } from '../services/api'
 import { Simulation, Agent, BlackboardTask, World } from '../types'
 import { SimulationWebSocket } from '../services/websocket'
-import SimulationMap from '../components/SimulationMap'
-import { useAnimations, ActiveAnimation } from '../hooks/useAnimations'
+import SimulationMapImproved from '../components/SimulationMapImproved'
 import './SimulationDetail.css'
+
+interface ActiveAnimation {
+  id: string
+  type: 'move' | 'fumigate' | 'analyze' | 'refill' | 'scan'
+  agentId: string
+  startTime: number
+  duration: number
+  from?: [number, number]
+  to?: [number, number]
+  position?: [number, number]
+  data?: any
+}
 
 export default function SimulationDetail() {
   const { id } = useParams<{ id: string }>()
@@ -16,8 +27,13 @@ export default function SimulationDetail() {
   const [loading, setLoading] = useState(true)
   const [wsConnected, setWsConnected] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
+  const [currentPhase, setCurrentPhase] = useState<'exploration' | 'fumigation' | 'completed'>('exploration')
+  const [revealedCells, setRevealedCells] = useState<Set<string>>(new Set())
+  const [infestationGrid, setInfestationGrid] = useState<number[][] | null>(null)
+  const [activeAnimations, setActiveAnimations] = useState<Map<string, ActiveAnimation>>(new Map())
+
   const wsRef = useRef<SimulationWebSocket | null>(null)
-  const { activeAnimations, startAnimation, clearAnimation } = useAnimations()
+  const animationTimeoutRef = useRef<Map<string, number>>(new Map())
 
   useEffect(() => {
     if (id) {
@@ -26,16 +42,16 @@ export default function SimulationDetail() {
       loadTasks()
     }
 
-    // Cleanup: desconectar WebSocket al desmontar
     return () => {
       if (wsRef.current) {
         wsRef.current.disconnect()
         wsRef.current = null
       }
+      // Clear all animation timeouts
+      animationTimeoutRef.current.forEach(timeout => clearTimeout(timeout))
     }
   }, [id])
 
-  // Reconectar WebSocket cuando el estado de la simulación cambia a 'running'
   useEffect(() => {
     if (simulation?.status === 'running' && !wsRef.current) {
       connectWebSocket()
@@ -51,21 +67,20 @@ export default function SimulationDetail() {
       setLoading(true)
       const response = await simulationsApi.get(id!)
       setSimulation(response.data)
-      
-      // Cargar el mundo de la simulación
+
       if (response.data.world) {
-        // Si el mundo viene incluido en la respuesta, usarlo directamente
         if (typeof response.data.world === 'object' && response.data.world.grid) {
           setWorld(response.data.world)
+          setInfestationGrid(response.data.world.infestation_grid)
         } else {
-          // Si solo viene el ID, cargar el mundo por separado
-          const worldId = typeof response.data.world === 'string' 
-            ? response.data.world 
+          const worldId = typeof response.data.world === 'string'
+            ? response.data.world
             : response.data.world_id || response.data.world?.id
           if (worldId) {
             try {
               const worldResponse = await worldsApi.get(worldId)
               setWorld(worldResponse.data)
+              setInfestationGrid(worldResponse.data.infestation_grid)
             } catch (worldError) {
               console.error('Error loading world:', worldError)
             }
@@ -99,735 +114,378 @@ export default function SimulationDetail() {
 
   const handleStartSimulation = async () => {
     if (!id) return
-    
+
     try {
       setLoading(true)
       const response = await simulationsApi.start(id)
       setSimulation(response.data.simulation)
-      // Conectar WebSocket después de iniciar
       if (response.data.simulation.status === 'running') {
         connectWebSocket()
       }
     } catch (error: any) {
-      console.error('Error iniciando simulación:', error)
+      console.error('Error starting simulation:', error)
       alert(error.response?.data?.error || 'Error al iniciar la simulación')
     } finally {
       setLoading(false)
     }
   }
 
-  // Funciones de animación con efectos visuales reales
-  const animateAgentMove = async (agentId: string, from: [number, number], to: [number, number]): Promise<void> => {
-    const animationId = `move-${agentId}-${Date.now()}`
-    const duration = 400 // 400ms para movimiento suave y visible
-    
-    const animation: ActiveAnimation = {
-      id: animationId,
-      type: 'move',
-      agentId,
-      startTime: performance.now(),
-      duration,
-      from,
-      to,
-    }
-    
-    startAnimation(animation)
-    
-    return new Promise(resolve => {
-      setTimeout(() => {
-        clearAnimation(animationId)
-        resolve()
-      }, duration)
+  const startAnimation = (animation: ActiveAnimation) => {
+    setActiveAnimations(prev => {
+      const newMap = new Map(prev)
+      newMap.set(animation.id, animation)
+      return newMap
     })
-  }
 
-  const animateFumigation = async (agentId: string, position: [number, number], data: any): Promise<void> => {
-    const animationId = `fumigate-${agentId}-${Date.now()}`
-    const duration = 500 // 500ms para fumigación
-    
-    const animation: ActiveAnimation = {
-      id: animationId,
-      type: 'fumigate',
-      agentId,
-      startTime: performance.now(),
-      duration,
-      position,
-      data,
-    }
-    
-    startAnimation(animation)
-    
-    return new Promise(resolve => {
-      setTimeout(() => {
-        clearAnimation(animationId)
-        resolve()
-      }, duration)
-    })
-  }
+    // Auto-clear animation after duration
+    const timeout = setTimeout(() => {
+      setActiveAnimations(prev => {
+        const newMap = new Map(prev)
+        newMap.delete(animation.id)
+        return newMap
+      })
+      animationTimeoutRef.current.delete(animation.id)
+    }, animation.duration)
 
-  const animateAnalysis = async (agentId: string, position: [number, number]): Promise<void> => {
-    const animationId = `analyze-${agentId}-${Date.now()}`
-    const duration = 400 // 400ms para análisis con ondas
-    
-    const animation: ActiveAnimation = {
-      id: animationId,
-      type: 'analyze',
-      agentId,
-      startTime: performance.now(),
-      duration,
-      position,
-    }
-    
-    startAnimation(animation)
-    
-    return new Promise(resolve => {
-      setTimeout(() => {
-        clearAnimation(animationId)
-        resolve()
-      }, duration)
-    })
-  }
-
-  const animateRefill = async (agentId: string, position: [number, number]): Promise<void> => {
-    const animationId = `refill-${agentId}-${Date.now()}`
-    const duration = 1000 // 1000ms para reabastecimiento
-    
-    const animation: ActiveAnimation = {
-      id: animationId,
-      type: 'refill',
-      agentId,
-      startTime: performance.now(),
-      duration,
-      position,
-    }
-    
-    startAnimation(animation)
-    
-    return new Promise(resolve => {
-      setTimeout(() => {
-        clearAnimation(animationId)
-        resolve()
-      }, duration)
-    })
+    animationTimeoutRef.current.set(animation.id, timeout)
   }
 
   const connectWebSocket = () => {
-    if (!id || wsRef.current) return
+    if (!id) return
 
     const ws = new SimulationWebSocket(id)
-    wsRef.current = ws
 
-    ws.connect()
-      .then(() => {
-        setWsConnected(true)
-        console.log('WebSocket conectado')
-      })
-      .catch((error) => {
-        console.error('Error conectando WebSocket:', error)
-        setWsConnected(false)
-      })
-
-    // Escuchar actualizaciones de pasos
-    ws.on('step_update', (data) => {
-      if (data.step !== undefined) {
-        setCurrentStep(data.step)
-      }
-      
-      // Actualizar agentes desde los datos del WebSocket
-      if (data.agents) {
-        const updatedAgents: Agent[] = data.agents.map((agentData) => ({
-          id: agentData.id,
-          agent_id: agentData.id,
-          world: simulation?.world || '',
-          agent_type: agentData.type,
-          is_active: true,
-          position_x: agentData.position[0],
-          position_z: agentData.position[1],
-          status: agentData.status,
-          tasks_completed: agentData.tasks_completed || 0,
-          fields_fumigated: agentData.fields_fumigated || 0,
-          metadata: agentData.type === 'fumigator' 
-            ? {
-                pesticide_level: agentData.pesticide_level || 0,
-                pesticide_capacity: agentData.pesticide_capacity || 1000,
-                pesticide_percentage: agentData.pesticide_level && agentData.pesticide_capacity
-                  ? (agentData.pesticide_level / agentData.pesticide_capacity * 100)
-                  : 0
-              }
-            : {
-                fields_analyzed: agentData.fields_analyzed || 0,
-                discoveries: agentData.discoveries || 0
-              },
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }))
-        setAgents(updatedAgents)
-      }
-
-      // Actualizar tareas desde los datos del WebSocket
-      if (data.tasks) {
-        const updatedTasks: BlackboardTask[] = data.tasks.map((taskData) => ({
-          id: taskData.id,
-          world: simulation?.world || '',
-          position_x: taskData.position_x,
-          position_z: taskData.position_z,
-          infestation_level: taskData.infestation_level,
-          priority: taskData.priority as 'low' | 'medium' | 'high' | 'critical',
-          status: taskData.status as 'pending' | 'assigned' | 'in_progress' | 'completed' | 'failed',
-          assigned_agent_id: taskData.assigned_agent_id || undefined,
-          created_at: new Date().toISOString(),
-          metadata: {}
-        }))
-        setTasks(updatedTasks)
-      }
-
-      // Actualizar grid de infestación del mundo en tiempo real
-      if (data.infestation_grid && world) {
-        setWorld({
-          ...world,
-          infestation_grid: data.infestation_grid
-        })
-      }
-
-      // Actualizar estadísticas de la simulación en tiempo real
-      if (simulation) {
-        const totalTasksCompleted = data.agents?.reduce((sum: number, a: any) => sum + (a.tasks_completed || 0), 0) || simulation.tasks_completed
-        const totalFieldsFumigated = data.agents?.reduce((sum: number, a: any) => sum + (a.fields_fumigated || 0), 0) || simulation.fields_fumigated
-        
-        setSimulation({
-          ...simulation,
-          steps_executed: data.step || simulation.steps_executed,
-          tasks_completed: totalTasksCompleted,
-          fields_fumigated: totalFieldsFumigated
-        })
-      }
-    })
-
-    // Escuchar inicio de simulación
-    ws.on('simulation_started', (data) => {
-      console.log('Simulación iniciada:', data)
-      if (simulation) {
-        setSimulation({ ...simulation, status: 'running' })
-      }
-    })
-
-    // Escuchar finalización de simulación
-    ws.on('simulation_completed', (data) => {
-      console.log('Simulación completada:', data)
-      if (simulation) {
-        setSimulation({
-          ...simulation,
-          status: 'completed',
-          steps_executed: data.step || simulation.steps_executed,
-          tasks_completed: data.results?.tasks_completed || simulation.tasks_completed,
-          fields_fumigated: data.results?.fields_fumigated || simulation.fields_fumigated
-        })
-      }
-      // Recargar datos finales
-      loadSimulation()
-      loadAgents()
-      loadTasks()
-    })
-
-    // Escuchar errores
-    ws.on('simulation_error', (data) => {
-      console.error('Error en simulación:', data)
-      if (simulation) {
-        setSimulation({ ...simulation, status: 'failed' })
-      }
-    })
-
-    // Escuchar comandos de agentes (nuevo sistema)
-    ws.on('agent_command', async (data) => {
-      if (!data.agent_id || !data.command) return
-      
-      const agentId = data.agent_id
-      const command = data.command
-      
-      console.log('Comando recibido para agente:', agentId, command)
-      
-      // Encontrar el agente en el estado actual
-      setAgents(prevAgents => {
-        const agent = prevAgents.find(a => a.id === agentId)
-        if (!agent) {
-          // Si no existe el agente, confirmar de todas formas para no bloquear
-          wsRef.current?.sendCommandConfirmation(agentId, undefined, false)
-          return prevAgents
-        }
-        
-        // Procesar comando de forma asíncrona
-        processAgentCommand(agentId, command, agent, prevAgents).catch(error => {
-          console.error('Error procesando comando:', error)
-          wsRef.current?.sendCommandConfirmation(agentId, undefined, false)
-        })
-        
-        return prevAgents
-      })
-    })
-
-    // Escuchar conexión
     ws.on('connection', (data) => {
-      console.log('Conexión WebSocket establecida:', data)
+      console.log('WebSocket connected:', data)
+      setWsConnected(true)
     })
+
+    ws.on('step_update', (data) => {
+      console.log('Step update:', data)
+      handleStepUpdate(data)
+    })
+
+    ws.on('simulation_completed', (data) => {
+      console.log('Simulation completed:', data)
+      setCurrentPhase('completed')
+      setSimulation(prev => prev ? { ...prev, status: 'completed' } : null)
+    })
+
+    // Usar listeners genéricos para eventos no tipados
+    ws.on('*', (data) => {
+      const dataType = (data as any).type || data.type
+      if (dataType === 'scout_exploration_complete') {
+        console.log('Scout exploration complete:', data)
+        setCurrentPhase('fumigation')
+      }
+      if (dataType === 'error') {
+        console.error('WebSocket error:', data)
+      }
+      if (dataType === 'close') {
+        console.log('WebSocket disconnected')
+        setWsConnected(false)
+      }
+    })
+
+    ws.connect().catch((error) => {
+      console.error('Error connecting WebSocket:', error)
+      setWsConnected(false)
+    })
+    wsRef.current = ws
   }
 
-  // Función para procesar comandos de agentes
-  const processAgentCommand = async (
-    agentId: string,
-    command: any,
-    agent: Agent,
-    _currentAgents: Agent[]
-  ) => {
-    try {
-      if (command.action === 'move') {
-        // Animar movimiento del agente
-        await animateAgentMove(agentId, command.from_position!, command.to_position!)
-          
-          // Si hay fumigación en el camino, procesarla
-          if (command.fumigate_on_path && command.fumigation_data) {
-            await animateFumigation(agentId, command.fumigation_data.position, command.fumigation_data)
-            
-            // Actualizar infestación del mundo
-            if (world && command.fumigation_data.position) {
-              const [x, z] = command.fumigation_data.position
-              const newGrid = world.infestation_grid.map((row, rowIdx) =>
-                rowIdx === z 
-                  ? row.map((cell, colIdx) => {
-                      if (colIdx === x) {
-                        const newLevel = Math.max(0, cell - command.fumigation_data.pesticide_needed)
-                        return newLevel
-                      }
-                      return cell
-                    })
-                  : row
-              )
-              setWorld({ ...world, infestation_grid: newGrid })
-            }
-            
-            // Actualizar pesticida del agente (solo si es fumigador)
-            if (agent.agent_type === 'fumigator') {
-              setAgents(prevAgents =>
-                prevAgents.map(a =>
-                  a.id === agentId
-                    ? {
-                        ...a,
-                        metadata: {
-                          ...a.metadata,
-                          pesticide_level: Math.max(0, (a.metadata?.pesticide_level || 0) - command.fumigation_data.pesticide_needed),
-                          pesticide_percentage: a.metadata?.pesticide_capacity
-                            ? Math.max(0, ((a.metadata?.pesticide_level || 0) - command.fumigation_data.pesticide_needed) / a.metadata.pesticide_capacity * 100)
-                            : 0
-                        }
-                      }
-                    : a
-                )
-              )
-            }
+  const handleStepUpdate = (data: any) => {
+    setCurrentStep(data.step || 0)
+
+    // Update agents
+    if (data.agents && Array.isArray(data.agents)) {
+      const updatedAgents = data.agents
+        .map((agentData: any) => {
+          // El backend envía 'agent_id' y 'agent_type', pero también puede enviar 'id' y 'type'
+          const agentId = agentData.agent_id || agentData.id
+          const agentType = agentData.agent_type || agentData.type
+          const existingAgent = agents.find(a => a.agent_id === agentId || a.id === agentId)
+
+        // Create animation for movement
+        if (existingAgent &&
+            existingAgent.position_x !== undefined &&
+            existingAgent.position_z !== undefined &&
+            agentData.position &&
+            Array.isArray(agentData.position) &&
+            (existingAgent.position_x !== agentData.position[0] ||
+             existingAgent.position_z !== agentData.position[1])) {
+          const animation: ActiveAnimation = {
+            id: `move-${agentId}-${Date.now()}`,
+            type: 'move',
+            agentId: agentId,
+            startTime: performance.now(),
+            duration: 800, // Aumentado de 400 a 800ms para animación más fluida
+            from: [existingAgent.position_x, existingAgent.position_z],
+            to: agentData.position,
           }
-          
-          // Si el scout revela infestación al moverse
-          if (command.reveal_infestation && agent.agent_type === 'scout' && world) {
-            // Revelar infestación en 3 filas alrededor de la posición destino
-            // El backend ya creará las tareas, aquí solo esperamos a que lleguen en step_update
-            // Pero podemos actualizar visualmente el mapa para mostrar la infestación revelada
-            // (Las tareas llegarán en el próximo step_update y se mostrarán automáticamente)
-          }
-          
-          // Actualizar posición del agente en el estado
-          setAgents(prevAgents => 
-            prevAgents.map(a => 
-              a.id === agentId 
-                ? { ...a, position_x: command.to_position![0], position_z: command.to_position![1] }
-                : a
-            )
-          )
-          
-        // Confirmar movimiento completado
-        wsRef.current?.sendCommandConfirmation(agentId)
-        
-      } else if (command.action === 'fumigate') {
-        // Animar fumigación
-        await animateFumigation(agentId, command.position!, {
-            infestation_level: command.infestation_level!,
-            pesticide_needed: command.required_pesticide!,
-            position: command.position!
-          })
-          
-          // Actualizar infestación del mundo
-          if (world && command.position) {
-            const [x, z] = command.position
-            const newGrid = world.infestation_grid.map((row, rowIdx) =>
-              rowIdx === z 
-                ? row.map((cell, colIdx) => colIdx === x ? 0 : cell)
-                : row
-            )
-            setWorld({ ...world, infestation_grid: newGrid })
-          }
-          
-          // Actualizar pesticida del agente
-          if (agent.agent_type === 'fumigator') {
-            setAgents(prevAgents =>
-              prevAgents.map(a =>
-                a.id === agentId
-                  ? {
-                      ...a,
-                      metadata: {
-                        ...a.metadata,
-                        pesticide_level: Math.max(0, (a.metadata?.pesticide_level || 0) - (command.required_pesticide || 0)),
-                        pesticide_percentage: a.metadata?.pesticide_capacity
-                          ? Math.max(0, ((a.metadata?.pesticide_level || 0) - (command.required_pesticide || 0)) / a.metadata.pesticide_capacity * 100)
-                          : 0
-                      },
-                      fields_fumigated: (a.fields_fumigated || 0) + 1,
-                      tasks_completed: (a.tasks_completed || 0) + 1
-                    }
-                  : a
-              )
-            )
-          }
-          
-          // Actualizar tareas: marcar la tarea en esta posición como completada
-          if (command.position) {
-            const [x, z] = command.position
-            setTasks(prevTasks =>
-              prevTasks.map(task =>
-                task.position_x === x && task.position_z === z
-                  ? { ...task, status: 'completed' as const }
-                  : task
-              )
-            )
-          }
-          
-        // Confirmar fumigación completada
-        wsRef.current?.sendCommandConfirmation(agentId)
-        
-      } else if (command.action === 'analyze') {
-        // Animar análisis (scout revelando infestación)
-        await animateAnalysis(agentId, command.position!)
-          
-          // Actualizar estadísticas del scout
-          setAgents(prevAgents =>
-            prevAgents.map(a =>
-              a.id === agentId && a.agent_type === 'scout'
-                ? {
-                    ...a,
-                    metadata: {
-                      ...a.metadata,
-                      fields_analyzed: (a.metadata?.fields_analyzed || 0) + 1
+          startAnimation(animation)
+        }
+
+        // Create scan animation for scouts and reveal cells
+        if (agentType === 'scout' && agentData.position) {
+          // Revelar celdas alrededor del scout (5x5) - siempre que el scout se mueva
+          const [x, z] = agentData.position
+          if (world && typeof x === 'number' && typeof z === 'number' && 
+              x >= 0 && z >= 0 && x < world.width && z < world.height) {
+            setRevealedCells(prevRevealed => {
+              const newRevealed = new Set(prevRevealed)
+              let hasChanges = false
+              // Revelar celdas en un área alrededor del scout (5x5, radius=2)
+              // Esto coincide con el backend que usa reveal_radius=2
+              for (let dz = -2; dz <= 2; dz++) {
+                for (let dx = -2; dx <= 2; dx++) {
+                  const checkZ = z + dz
+                  const checkX = x + dx
+                  if (checkZ >= 0 && checkZ < world.height &&
+                      checkX >= 0 && checkX < world.width) {
+                    const cellKey = `${checkX},${checkZ}`
+                    if (!newRevealed.has(cellKey)) {
+                      newRevealed.add(cellKey)
+                      hasChanges = true
                     }
                   }
-                : a
-            )
-          )
-          
-          // Las tareas descubiertas se actualizarán en el próximo step_update del backend
-        // Confirmar análisis completado
-        wsRef.current?.sendCommandConfirmation(agentId)
+                }
+              }
+              // Solo retornar nuevo Set si hay cambios para evitar re-renders innecesarios
+              return hasChanges ? newRevealed : prevRevealed
+            })
+          }
+
+          if (agentData.status === 'scouting') {
+            const animation: ActiveAnimation = {
+              id: `scan-${agentId}-${Date.now()}`,
+              type: 'scan',
+              agentId: agentId,
+              startTime: performance.now(),
+              duration: 1000, // Aumentado de 600 a 1000ms
+              position: agentData.position,
+            }
+            startAnimation(animation)
+          }
+        }
+
+        // Create fumigation animation
+        if (agentType === 'fumigator' && agentData.status === 'fumigating') {
+          const animation: ActiveAnimation = {
+            id: `fumigate-${agentId}-${Date.now()}`,
+            type: 'fumigate',
+            agentId: agentId,
+            startTime: performance.now(),
+            duration: 1200, // Aumentado de 800 a 1200ms
+            position: agentData.position,
+          }
+          startAnimation(animation)
+        }
+
+        const existingAgentData = existingAgent || agents.find(a => a.agent_id === agentId || a.id === agentId)
         
-      } else if (command.action === 'refill') {
-        // Animar reabastecimiento
-        await animateRefill(agentId, command.position!)
-          
-          // Actualizar nivel de pesticida del agente
-          setAgents(prevAgents =>
-            prevAgents.map(a =>
-              a.id === agentId && a.agent_type === 'fumigator'
-                ? {
-                    ...a,
-                    metadata: {
-                      ...a.metadata,
-                      pesticide_level: a.metadata?.pesticide_capacity || 1000,
-                      pesticide_percentage: 100
-                    }
-                  }
-                : a
-            )
-          )
-          
-        // Confirmar reabastecimiento completado
-        wsRef.current?.sendCommandConfirmation(agentId)
+        // Asegurar que tenemos posición válida
+        if (!agentData.position || !Array.isArray(agentData.position) || agentData.position.length < 2) {
+          console.warn('Agent data missing position:', { agentId, agentType, agentData })
+          // Si no hay posición pero hay un agente existente, mantenerlo
+          if (existingAgentData) {
+            return existingAgentData
+          }
+          return null
+        }
+        
+        // Si no hay agentId, no podemos procesar este agente
+        if (!agentId) {
+          console.warn('Agent data missing ID:', agentData)
+          return null
+        }
+        
+        return {
+          id: agentId,
+          agent_id: agentId,
+          world: existingAgentData?.world || simulation?.world || '',
+          agent_type: agentType || 'fumigator',
+          is_active: existingAgentData?.is_active ?? true,
+          position_x: agentData.position[0],
+          position_z: agentData.position[1],
+          status: agentData.status || 'idle',
+          tasks_completed: agentData.tasks_completed || 0,
+          fields_fumigated: agentData.fields_fumigated || 0,
+          metadata: {
+            pesticide_level: agentData.pesticide_level || 0,
+          },
+          created_at: existingAgentData?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        } as Agent
+        })
+        .filter((agent: Agent | null): agent is Agent => agent !== null)
+
+      setAgents(updatedAgents)
+    }
+
+    // Update tasks
+    if (data.tasks && Array.isArray(data.tasks)) {
+      const updatedTasks = data.tasks.map((taskData: any) => ({
+        id: taskData.task_id,
+        position_x: taskData.position[0],
+        position_z: taskData.position[1],
+        infestation_level: taskData.infestation_level,
+        priority: taskData.priority,
+        status: taskData.status,
+        assigned_agent_id: taskData.assigned_agent_id,
+      } as BlackboardTask))
+
+      setTasks(updatedTasks)
+    }
+
+    // Update infestation grid
+    if (data.infestation_grid) {
+      setInfestationGrid(data.infestation_grid)
+    }
+
+    // Check phase
+    if (data.statistics) {
+      const scoutCoverage = data.statistics.total_fields_analyzed /
+                           (data.statistics.total_fields_analyzed + data.statistics.pending_tasks)
+      if (scoutCoverage >= 0.99 && currentPhase === 'exploration') {
+        setCurrentPhase('fumigation')
       }
-    } catch (error) {
-      console.error('Error procesando comando:', error)
-      // Confirmar con error para no bloquear la simulación
-      wsRef.current?.sendCommandConfirmation(agentId, undefined, false)
     }
   }
 
-  if (loading) {
-    return <div className="loading">Cargando simulación...</div>
+  if (loading && !simulation) {
+    return (
+      <div className="container">
+        <div className="loading">Cargando simulación...</div>
+      </div>
+    )
   }
 
   if (!simulation) {
-    return <div className="error">Simulación no encontrada</div>
+    return (
+      <div className="container">
+        <div className="error">Simulación no encontrada</div>
+      </div>
+    )
   }
 
-  const fumigators = agents.filter((a) => a.agent_type === 'fumigator')
-  const scouts = agents.filter((a) => a.agent_type === 'scout')
-
-  const tasksByStatus = {
-    pending: tasks.filter((t) => t.status === 'pending').length,
-    assigned: tasks.filter((t) => t.status === 'assigned').length,
-    in_progress: tasks.filter((t) => t.status === 'in_progress').length,
-    completed: tasks.filter((t) => t.status === 'completed').length,
-    failed: tasks.filter((t) => t.status === 'failed').length,
-  }
+  const scoutAgents = agents.filter(a => a.agent_type === 'scout')
+  const fumigatorAgents = agents.filter(a => a.agent_type === 'fumigator')
+  const completedTasks = tasks.filter(t => t.status === 'completed').length
+  const totalTasks = tasks.length
 
   return (
-    <div className="simulation-detail">
-      <div className="simulation-detail-header">
+    <div className="container simulation-detail">
+      {/* Header */}
+      <div className="header">
         <Link to="/simulations" className="back-link">← Volver a Simulaciones</Link>
-        <div className="simulation-detail-title">
-          <h1>Simulación {simulation.id.slice(0, 8)}</h1>
-          <div className="status-container">
-            <div className={`status-badge ${simulation.status}`}>
-              {simulation.status}
-            </div>
-            {simulation.status === 'running' && (
-              <div className={`ws-status ${wsConnected ? 'connected' : 'disconnected'}`}>
-                {wsConnected ? '🟢 En tiempo real' : '🟡 Conectando...'}
-              </div>
-            )}
-          </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+          <h1>Simulación: {simulation.id}</h1>
+          <div className={`status-badge status-${simulation.status}`}>{simulation.status}</div>
         </div>
       </div>
 
-      {/* Botón para iniciar simulación si está pendiente */}
+      {/* Control Panel */}
       {simulation.status === 'pending' && (
-        <div className="simulation-controls">
-          <button 
-            className="btn btn-primary btn-large"
+        <div className="control-panel">
+          <button
             onClick={handleStartSimulation}
             disabled={loading}
+            className="btn btn-primary"
           >
-            ▶ Iniciar Simulación
+            {loading ? 'Iniciando...' : '▶ Iniciar Simulación'}
           </button>
         </div>
       )}
 
-      {simulation.status === 'running' && (
-        <div className="simulation-progress">
-          <div className="progress-info">
-            <span>Paso actual: {currentStep} / {simulation.max_steps}</span>
-            <div className="progress-bar">
-              <div 
-                className="progress-fill" 
-                style={{ width: `${(currentStep / simulation.max_steps) * 100}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Visualización del mapa en tiempo real */}
+      {/* Simulation Map - Main Focus */}
       {world && (
-        <SimulationMap
+        <SimulationMapImproved
           world={world}
           agents={agents}
           tasks={tasks}
           showInfestation={true}
           activeAnimations={activeAnimations}
+          infestationGrid={infestationGrid || undefined}
+          revealedCells={revealedCells}
         />
       )}
 
-      <div className="simulation-stats-grid">
-        <div className="stat-card">
-          <div className="stat-icon">🤖</div>
-          <div className="stat-content">
-            <div className="stat-value">{simulation.num_agents}</div>
-            <div className="stat-label">Agentes Totales</div>
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-icon">🚜</div>
-          <div className="stat-content">
-            <div className="stat-value">{simulation.num_fumigators}</div>
-            <div className="stat-label">Fumigadores</div>
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-icon">🔍</div>
-          <div className="stat-content">
-            <div className="stat-value">{simulation.num_scouts}</div>
-            <div className="stat-label">Scouts</div>
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-icon">📊</div>
-          <div className="stat-content">
-            <div className="stat-value">{simulation.steps_executed}</div>
-            <div className="stat-label">Pasos Ejecutados</div>
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-icon">✅</div>
-          <div className="stat-content">
-            <div className="stat-value">{simulation.tasks_completed}</div>
-            <div className="stat-label">Tareas Completadas</div>
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-icon">🌾</div>
-          <div className="stat-content">
-            <div className="stat-value">{simulation.fields_fumigated}</div>
-            <div className="stat-label">Campos Fumigados</div>
-          </div>
-        </div>
-      </div>
+      {/* Status and Info Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', marginTop: '2rem' }}>
+        {/* Simulation Status Panel */}
+        <div className="simulation-status">
+          <h3>Estado de la Simulación</h3>
 
-      <div className="simulation-content">
-        <div className="simulation-section">
-          <h2>Agentes</h2>
-          <div className="agents-section">
-            <div className="agents-group">
-              <h3>Fumigadores ({fumigators.length})</h3>
-              <div className="agents-list">
-                {fumigators.map((agent) => (
-                  <div key={agent.id} className="agent-card">
-                    <div className="agent-header">
-                      <strong>{agent.agent_id}</strong>
-                      <span className={`agent-status-badge ${agent.status}`}>
-                        {agent.status}
-                      </span>
-                    </div>
-                    <div className="agent-details">
-                      <div className="agent-detail">
-                        <span>Posición:</span>
-                        <span>
-                          {agent.position_x !== null && agent.position_z !== null
-                            ? `(${agent.position_x}, ${agent.position_z})`
-                            : 'N/A'}
-                        </span>
-                      </div>
-                      <div className="agent-detail">
-                        <span>Tareas Completadas:</span>
-                        <span>{agent.tasks_completed}</span>
-                      </div>
-                      <div className="agent-detail">
-                        <span>Campos Fumigados:</span>
-                        <span>{agent.fields_fumigated}</span>
-                      </div>
-                      {agent.metadata?.pesticide_level !== undefined && (
-                        <div className="agent-detail">
-                          <span>Pesticida:</span>
-                          <span>
-                            {Math.round(agent.metadata.pesticide_level)} / {agent.metadata.pesticide_capacity || 1000}
-                            {' '}
-                            ({Math.round(agent.metadata.pesticide_percentage || 0)}%)
-                          </span>
-                          <div className="pesticide-bar">
-                            <div 
-                              className="pesticide-fill" 
-                              style={{ width: `${agent.metadata.pesticide_percentage || 0}%` }}
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+          <div className={`phase-indicator ${currentPhase}`}>
+            {currentPhase === 'exploration' && '🔍 Fase de Exploración'}
+            {currentPhase === 'fumigation' && '🚜 Fase de Fumigación'}
+            {currentPhase === 'completed' && '✓ Simulación Completada'}
+          </div>
+
+          <div className="status-grid">
+            <div className="status-item">
+              <span className="status-label">Paso Actual</span>
+              <span className="status-value">{currentStep} / {simulation.max_steps}</span>
             </div>
-            <div className="agents-group">
-              <h3>Scouts ({scouts.length})</h3>
-              <div className="agents-list">
-                {scouts.map((agent) => (
-                  <div key={agent.id} className="agent-card">
-                    <div className="agent-header">
-                      <strong>{agent.agent_id}</strong>
-                      <span className={`agent-status-badge ${agent.status}`}>
-                        {agent.status}
-                      </span>
-                    </div>
-                    <div className="agent-details">
-                      <div className="agent-detail">
-                        <span>Posición:</span>
-                        <span>
-                          {agent.position_x !== null && agent.position_z !== null
-                            ? `(${agent.position_x}, ${agent.position_z})`
-                            : 'N/A'}
-                        </span>
-                      </div>
-                      {agent.metadata?.fields_analyzed !== undefined && (
-                        <div className="agent-detail">
-                          <span>Campos Analizados:</span>
-                          <span>{agent.metadata.fields_analyzed}</span>
-                        </div>
-                      )}
-                      {agent.metadata?.discoveries !== undefined && (
-                        <div className="agent-detail">
-                          <span>Descubrimientos:</span>
-                          <span>{agent.metadata.discoveries}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+            <div className="status-item">
+              <span className="status-label">Scout</span>
+              <span className="status-value scout">
+                {scoutAgents[0]?.status || 'idle'}
+              </span>
+            </div>
+            <div className="status-item">
+              <span className="status-label">Fumigadores Activos</span>
+              <span className="status-value fumigator">
+                {fumigatorAgents.filter(a => a.status !== 'idle').length} / {fumigatorAgents.length}
+              </span>
+            </div>
+            <div className="status-item">
+              <span className="status-label">Tareas Completadas</span>
+              <span className="status-value completed">
+                {completedTasks} / {totalTasks}
+              </span>
+            </div>
+            <div className="status-item">
+              <span className="status-label">Celdas Reveladas</span>
+              <span className="status-value">{revealedCells.size}</span>
+            </div>
+            <div className="status-item">
+              <span className="status-label">WebSocket</span>
+              <span className={`status-value ${wsConnected ? 'connected' : 'disconnected'}`}>
+                {wsConnected ? '✓ Conectado' : '✗ Desconectado'}
+              </span>
             </div>
           </div>
         </div>
 
-        <div className="simulation-section">
-          <h2>Tareas del Blackboard</h2>
-          <div className="tasks-summary">
-            <div className="task-summary-item">
-              <span className="task-summary-label">Pendientes:</span>
-              <span className="task-summary-value">{tasksByStatus.pending}</span>
-            </div>
-            <div className="task-summary-item">
-              <span className="task-summary-label">Asignadas:</span>
-              <span className="task-summary-value">{tasksByStatus.assigned}</span>
-            </div>
-            <div className="task-summary-item">
-              <span className="task-summary-label">En Progreso:</span>
-              <span className="task-summary-value">{tasksByStatus.in_progress}</span>
-            </div>
-            <div className="task-summary-item">
-              <span className="task-summary-label">Completadas:</span>
-              <span className="task-summary-value success">{tasksByStatus.completed}</span>
-            </div>
-            <div className="task-summary-item">
-              <span className="task-summary-label">Fallidas:</span>
-              <span className="task-summary-value danger">{tasksByStatus.failed}</span>
-            </div>
-          </div>
-          <div className="tasks-list">
-            {tasks.length === 0 ? (
-              <p className="empty">No hay tareas</p>
-            ) : (
-              tasks.map((task) => (
-                <div key={task.id} className="task-card">
-                  <div className="task-card-header">
-                    <div className={`task-priority-indicator ${task.priority}`} />
-                    <div>
-                      <strong>Posición: ({task.position_x}, {task.position_z})</strong>
-                      <span className="task-infestation">
-                        Infestación: {task.infestation_level}%
-                      </span>
-                    </div>
-                  </div>
-                  <div className="task-card-body">
-                    <div className="task-info-row">
-                      <span>Estado: {task.status}</span>
-                      <span>Prioridad: {task.priority}</span>
-                      {task.assigned_agent_id && (
-                        <span>Asignado a: {task.assigned_agent_id}</span>
-                      )}
-                    </div>
-                    {task.created_at && (
-                      <div className="task-date">
-                        Creada: {new Date(task.created_at).toLocaleString()}
-                      </div>
-                    )}
-                  </div>
+        {/* Agents List */}
+        <div className="agents-section">
+          <h3>Agentes ({agents.length})</h3>
+          <div className="agents-list">
+            {agents.map(agent => (
+              <div key={agent.id} className={`agent-card agent-${agent.agent_type}`}>
+                <div className="agent-header">
+                  <span className="agent-icon">
+                    {agent.agent_type === 'scout' ? '🔍' : '🚜'}
+                  </span>
+                  <span className="agent-id">{agent.agent_id}</span>
+                  <span className={`agent-status status-${agent.status}`}>
+                    {agent.status}
+                  </span>
                 </div>
-              ))
-            )}
+                <div className="agent-stats">
+                  <div><strong>Posición:</strong> ({agent.position_x ?? '?'}, {agent.position_z ?? '?'})</div>
+                  <div><strong>Tareas:</strong> {agent.tasks_completed}</div>
+                  {agent.agent_type === 'fumigator' && (
+                    <div><strong>Pesticida:</strong> {agent.metadata?.pesticide_level || 0}%</div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
     </div>
   )
 }
-

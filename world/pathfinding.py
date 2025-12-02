@@ -758,11 +758,11 @@ class Pathfinder:
         # - Fila 1: analiza 0, 1, 2
         # - Fila 4: analiza 3, 4, 5 (la fila 2 ya está descubierta, pero 3, 4, 5 son nuevas)
         # - Fila 7: analiza 6, 7, 8
-        spacing = 3
+        spacing = 5
         
         # Empezar desde la fila 1 (no 0) para que pueda analizar la fila 0 arriba
         # Si empezamos en 0, no hay fila arriba para analizar
-        start_row = 1
+        start_row = 2
         
         # Primero agregar la fila 0 (después del camino a la esquina)
         # El dron estará en fila 1, pero analizará fila 0 también
@@ -901,7 +901,7 @@ class Pathfinder:
                         # Pero solo en un radio alrededor de la posición actual del dron
                         # Radio de visión: 2 celdas a cada lado (total 5 celdas de ancho)
                         vision_radius = 2
-                        for dz in [-1, 0, 1]:  # Fila arriba, actual, fila abajo
+                        for dz in [-2, -1, 0, 1, 2]:  # Fila arriba, actual, fila abajo
                             nz = z + dz
                             if self._in_bounds(0, nz):  # Verificar que la fila existe
                                 # Analizar solo las celdas en el radio de visión alrededor del dron

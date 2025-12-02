@@ -12,7 +12,7 @@ from .serializers import (
     BlackboardTaskSerializer,
     BlackboardEntrySerializer
 )
-from .agent_system import run_simulation
+from .simulation.runner import run_simulation_async
 from world.models import World
 from .models import BlackboardTask, BlackboardEntry
 from .services import BlackboardService
@@ -138,32 +138,13 @@ class SimulationViewSet(viewsets.ModelViewSet):
         simulation.started_at = timezone.now()
         simulation.save()
         
-        # Ejecutar simulación en background (thread separado)
-        import threading
-        from .agent_system import run_simulation
-        
-        def run_simulation_background():
-            try:
-                run_simulation(
-                    world_instance=world,
-                    num_fumigators=num_fumigators,
-                    num_scouts=num_scouts,
-                    max_steps=max_steps,
-                    min_infestation=min_infestation,
-                    simulation_id=str(simulation.id),
-                    emit_updates=True,
-                    step_delay=0.5  # Aumentar delay para visualización paso a paso
-                )
-            except Exception as e:
-                # Si hay error, actualizar estado de la simulación
-                simulation.status = 'failed'
-                simulation.completed_at = timezone.now()
-                simulation.results = {'error': str(e)}
-                simulation.save()
-        
-        # Iniciar simulación en thread separado
-        thread = threading.Thread(target=run_simulation_background, daemon=True)
-        thread.start()
+        # Ejecutar simulación en background usando el nuevo sistema
+        run_simulation_async(
+            simulation_id=str(simulation.id),
+            max_steps=max_steps,
+            step_delay=0.5,
+            send_updates=True
+        )
         
         output_serializer = SimulationSerializer(simulation)
         return Response({

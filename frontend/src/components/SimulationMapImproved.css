@@ -1,0 +1,130 @@
+.simulation-map-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.simulation-map-canvas {
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  background: #f0f0f0;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.simulation-map-legend {
+  background: white;
+  padding: 15px 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  min-width: 300px;
+}
+
+.simulation-map-legend h4 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: #666;
+}
+
+.legend-color {
+  width: 30px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+}
+
+.legend-color.fog {
+  background: linear-gradient(135deg, #282828 0%, #505050 100%);
+}
+
+.legend-color.infestation {
+  background: linear-gradient(90deg, #ffff00 0%, #ff0000 100%);
+}
+
+/* Estilos para el estado de la simulación */
+.simulation-status {
+  background: white;
+  padding: 15px 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-bottom: 20px;
+}
+
+.simulation-status h3 {
+  margin: 0 0 10px 0;
+  font-size: 18px;
+  color: #333;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+  margin-top: 15px;
+}
+
+.status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.status-label {
+  font-size: 12px;
+  color: #666;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.status-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: #333;
+}
+
+.status-value.scout {
+  color: #00ffff;
+}
+
+.status-value.fumigator {
+  color: #3b82f6;
+}
+
+.status-value.completed {
+  color: #10b981;
+}
+
+.phase-indicator {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 10px;
+}
+
+.phase-indicator.exploration {
+  background: rgba(0, 255, 255, 0.2);
+  color: #00b8b8;
+}
+
+.phase-indicator.fumigation {
+  background: rgba(59, 130, 246, 0.2);
+  color: #2563eb;
+}
+
+.phase-indicator.completed {
+  background: rgba(16, 185, 129, 0.2);
+  color: #059669;
+}
