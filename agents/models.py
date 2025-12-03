@@ -217,3 +217,120 @@ class Simulation(models.Model):
     
     def __str__(self):
         return f"Simulación {self.id} - Mundo {self.world.name} - {self.status}"
+
+
+class SimulationStats(models.Model):
+    """
+    Estadísticas detalladas de una simulación completada.
+    Almacena métricas relevantes para análisis y visualización.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Relación con la simulación (OneToOne)
+    simulation = models.OneToOneField(
+        Simulation,
+        on_delete=models.CASCADE,
+        related_name='stats',
+        help_text="Simulación asociada"
+    )
+    
+    # Duración y tiempo
+    duration_seconds = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Duración total de la simulación en segundos"
+    )
+    
+    # Eficiencia
+    efficiency_score = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Eficiencia: campos fumigados por paso"
+    )
+    tasks_per_step = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Tareas completadas por paso"
+    )
+    
+    # Tasa de éxito
+    success_rate = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Porcentaje de tareas completadas (0-100)"
+    )
+    completion_percentage = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Porcentaje de campos fumigados (0-100)"
+    )
+    
+    # Estadísticas de infestación
+    initial_infested_fields = models.IntegerField(
+        default=0,
+        help_text="Número de campos con infestación al inicio"
+    )
+    final_infested_fields = models.IntegerField(
+        default=0,
+        help_text="Número de campos con infestación al final"
+    )
+    infestation_reduction_percentage = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Porcentaje de reducción de infestación (0-100)"
+    )
+    average_initial_infestation = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Nivel promedio de infestación inicial"
+    )
+    average_final_infestation = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Nivel promedio de infestación final"
+    )
+    
+    # Estadísticas por agente
+    avg_tasks_per_agent = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Promedio de tareas completadas por agente"
+    )
+    avg_fields_per_agent = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Promedio de campos fumigados por agente"
+    )
+    max_tasks_by_agent = models.IntegerField(
+        default=0,
+        help_text="Máximo de tareas completadas por un solo agente"
+    )
+    min_tasks_by_agent = models.IntegerField(
+        default=0,
+        help_text="Mínimo de tareas completadas por un solo agente"
+    )
+    
+    # Tiempo promedio
+    avg_time_per_task = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Tiempo promedio por tarea en segundos"
+    )
+    
+    # Metadatos
+    created_at = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(
+        default=dict,
+        help_text="Información adicional y estadísticas detalladas"
+    )
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Estadísticas de Simulación'
+        verbose_name_plural = 'Estadísticas de Simulaciones'
+        indexes = [
+            models.Index(fields=['simulation']),
+        ]
+    
+    def __str__(self):
+        return f"Stats de Simulación {self.simulation.id} - Eficiencia: {self.efficiency_score:.2f}"

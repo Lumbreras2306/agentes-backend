@@ -47,6 +47,7 @@ export const simulationsApi = {
   start: (id: string) => api.post(`/simulations/${id}/start/`),
   getAgents: (id: string) => api.get(`/simulations/${id}/agents/`),
   getTasks: (id: string) => api.get(`/simulations/${id}/tasks/`),
+  getStats: (id: string) => api.get(`/simulations/${id}/stats/`),
 }
 
 // Blackboard API

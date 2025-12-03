@@ -4,13 +4,14 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 
-from .models import Agent, Simulation
+from .models import Agent, Simulation, SimulationStats
 from .serializers import (
     AgentSerializer,
     SimulationSerializer,
     SimulationCreateSerializer,
     BlackboardTaskSerializer,
-    BlackboardEntrySerializer
+    BlackboardEntrySerializer,
+    SimulationStatsSerializer
 )
 from .simulation.runner import run_simulation_async
 from world.models import World
@@ -111,6 +112,26 @@ class SimulationViewSet(viewsets.ModelViewSet):
         tasks = BlackboardTask.objects.filter(world=simulation.world)
         serializer = BlackboardTaskSerializer(tasks, many=True)
         return Response(serializer.data)
+    
+    @action(detail=True, methods=['get'])
+    def stats(self, request, pk=None):
+        """
+        Obtiene las estadísticas de una simulación.
+        
+        GET /api/simulations/{id}/stats/
+        """
+        simulation = self.get_object()
+        
+        # Intentar obtener estadísticas existentes
+        try:
+            stats = simulation.stats
+            serializer = SimulationStatsSerializer(stats)
+            return Response(serializer.data)
+        except SimulationStats.DoesNotExist:
+            # Si no existen estadísticas, retornar error 404
+            return Response({
+                'error': 'No se encontraron estadísticas para esta simulación. La simulación debe estar completada.'
+            }, status=status.HTTP_404_NOT_FOUND)
     
     @action(detail=True, methods=['post'])
     def start(self, request, pk=None):

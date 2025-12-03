@@ -11,7 +11,7 @@ import logging
 from django.utils import timezone
 
 from .model import FumigationModel
-from agents.models import Simulation
+from agents.models import Simulation, SimulationStats, Agent
 from agents.services import BlackboardService
 from agents.communication.broadcaster import StateBroadcaster
 
@@ -202,6 +202,9 @@ def run_simulation(
         simulation.results = stats
         simulation.save()
 
+        # Calcular y guardar estadísticas detalladas
+        _calculate_and_save_stats(simulation, model, stats)
+
         # Send completion message
         if broadcaster:
             _send_completion(broadcaster, model, simulation)
@@ -305,3 +308,171 @@ def _send_completion(broadcaster: StateBroadcaster, model: FumigationModel, simu
 def _send_error(broadcaster: StateBroadcaster, error_message: str):
     """Send error message via WebSocket using the Unity-compatible protocol."""
     broadcaster.send_error(error_message)
+
+
+def _calculate_and_save_stats(simulation: Simulation, model: FumigationModel, stats: dict):
+    """
+    Calcula y guarda estadísticas detalladas de la simulación.
+    
+    Args:
+        simulation: Instancia de Simulation
+        model: Instancia de FumigationModel
+        stats: Diccionario con estadísticas básicas
+    """
+    from world.world_generator import TileType
+    
+    # Calcular duración
+    duration_seconds = None
+    if simulation.started_at and simulation.completed_at:
+        duration = simulation.completed_at - simulation.started_at
+        duration_seconds = duration.total_seconds()
+    
+    # Obtener datos del mundo
+    world = simulation.world
+    world.refresh_from_db()
+    
+    # Calcular estadísticas de infestación
+    initial_infested_fields = 0
+    final_infested_fields = 0
+    total_initial_infestation = 0
+    total_final_infestation = 0
+    infested_cells_initial = 0
+    infested_cells_final = 0
+    
+    if world.grid and world.infestation_grid:
+        # Obtener infestation_grid inicial desde el modelo si está disponible
+        initial_infestation_grid = None
+        if hasattr(model.blackboard.knowledge_base.world_state, 'initial_infestation_grid'):
+            initial_infestation_grid = model.blackboard.knowledge_base.world_state.initial_infestation_grid
+        else:
+            # Si no está disponible, usar el del mundo (que debería ser el inicial)
+            initial_infestation_grid = world.infestation_grid
+        
+        current_infestation_grid = model.blackboard.knowledge_base.world_state.infestation_grid
+        
+        for z in range(world.height):
+            for x in range(world.width):
+                if world.grid[z][x] == TileType.FIELD:
+                    # Infestación inicial
+                    if initial_infestation_grid and z < len(initial_infestation_grid) and x < len(initial_infestation_grid[z]):
+                        initial_infestation = initial_infestation_grid[z][x]
+                        if initial_infestation > 0:
+                            initial_infested_fields += 1
+                            total_initial_infestation += initial_infestation
+                            infested_cells_initial += 1
+                    
+                    # Infestación final
+                    if current_infestation_grid and z < len(current_infestation_grid) and x < len(current_infestation_grid[z]):
+                        final_infestation = current_infestation_grid[z][x]
+                        if final_infestation > 0:
+                            final_infested_fields += 1
+                            total_final_infestation += final_infestation
+                            infested_cells_final += 1
+    
+    # Calcular promedios de infestación
+    average_initial_infestation = None
+    average_final_infestation = None
+    if infested_cells_initial > 0:
+        average_initial_infestation = total_initial_infestation / infested_cells_initial
+    if infested_cells_final > 0:
+        average_final_infestation = total_final_infestation / infested_cells_final
+    
+    # Calcular porcentaje de reducción de infestación
+    infestation_reduction_percentage = None
+    if initial_infested_fields > 0:
+        infestation_reduction_percentage = ((initial_infested_fields - final_infested_fields) / initial_infested_fields) * 100
+    
+    # Calcular eficiencia
+    efficiency_score = None
+    tasks_per_step = None
+    if simulation.steps_executed > 0:
+        efficiency_score = simulation.fields_fumigated / simulation.steps_executed
+        tasks_per_step = simulation.tasks_completed / simulation.steps_executed
+    
+    # Calcular tasa de éxito
+    success_rate = None
+    if stats['tasks']['total'] > 0:
+        success_rate = (stats['tasks']['completed'] / stats['tasks']['total']) * 100
+    
+    # Calcular porcentaje de completitud
+    completion_percentage = None
+    total_fields = sum(1 for z in range(world.height) for x in range(world.width) 
+                      if world.grid[z][x] == TileType.FIELD) if world.grid else 0
+    if total_fields > 0:
+        completion_percentage = (simulation.fields_fumigated / total_fields) * 100
+    
+    # Estadísticas por agente
+    agents = Agent.objects.filter(world=world, is_active=True)
+    agent_tasks = [agent.tasks_completed for agent in agents if agent.tasks_completed > 0]
+    agent_fields = [agent.fields_fumigated for agent in agents if agent.fields_fumigated > 0]
+    
+    avg_tasks_per_agent = None
+    avg_fields_per_agent = None
+    max_tasks_by_agent = 0
+    min_tasks_by_agent = 0
+    
+    if agent_tasks:
+        avg_tasks_per_agent = sum(agent_tasks) / len(agent_tasks) if agent_tasks else 0
+        max_tasks_by_agent = max(agent_tasks)
+        min_tasks_by_agent = min(agent_tasks)
+    
+    if agent_fields:
+        avg_fields_per_agent = sum(agent_fields) / len(agent_fields) if agent_fields else 0
+    
+    # Tiempo promedio por tarea
+    avg_time_per_task = None
+    if duration_seconds and simulation.tasks_completed > 0:
+        avg_time_per_task = duration_seconds / simulation.tasks_completed
+    
+    # Crear o actualizar estadísticas
+    stats_obj, created = SimulationStats.objects.get_or_create(
+        simulation=simulation,
+        defaults={
+            'duration_seconds': duration_seconds,
+            'efficiency_score': efficiency_score,
+            'tasks_per_step': tasks_per_step,
+            'success_rate': success_rate,
+            'completion_percentage': completion_percentage,
+            'initial_infested_fields': initial_infested_fields,
+            'final_infested_fields': final_infested_fields,
+            'infestation_reduction_percentage': infestation_reduction_percentage,
+            'average_initial_infestation': average_initial_infestation,
+            'average_final_infestation': average_final_infestation,
+            'avg_tasks_per_agent': avg_tasks_per_agent,
+            'avg_fields_per_agent': avg_fields_per_agent,
+            'max_tasks_by_agent': max_tasks_by_agent,
+            'min_tasks_by_agent': min_tasks_by_agent,
+            'avg_time_per_task': avg_time_per_task,
+            'metadata': {
+                'total_fields': total_fields,
+                'total_agents': len(agents),
+                'agent_tasks_distribution': agent_tasks,
+                'agent_fields_distribution': agent_fields,
+            }
+        }
+    )
+    
+    if not created:
+        # Actualizar si ya existía
+        stats_obj.duration_seconds = duration_seconds
+        stats_obj.efficiency_score = efficiency_score
+        stats_obj.tasks_per_step = tasks_per_step
+        stats_obj.success_rate = success_rate
+        stats_obj.completion_percentage = completion_percentage
+        stats_obj.initial_infested_fields = initial_infested_fields
+        stats_obj.final_infested_fields = final_infested_fields
+        stats_obj.infestation_reduction_percentage = infestation_reduction_percentage
+        stats_obj.average_initial_infestation = average_initial_infestation
+        stats_obj.average_final_infestation = average_final_infestation
+        stats_obj.avg_tasks_per_agent = avg_tasks_per_agent
+        stats_obj.avg_fields_per_agent = avg_fields_per_agent
+        stats_obj.max_tasks_by_agent = max_tasks_by_agent
+        stats_obj.min_tasks_by_agent = min_tasks_by_agent
+        stats_obj.avg_time_per_task = avg_time_per_task
+        stats_obj.metadata = {
+            'total_fields': total_fields,
+            'total_agents': len(agents),
+            'agent_tasks_distribution': agent_tasks,
+            'agent_fields_distribution': agent_fields,
+        }
+        stats_obj.save()

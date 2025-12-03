@@ -77,6 +77,10 @@
   background: var(--primary-dark);
 }
 
+.stats-section {
+  margin-top: 3rem;
+}
+
 @media (max-width: 768px) {
   .hero h1 {
     font-size: 2rem;

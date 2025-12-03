@@ -13,6 +13,7 @@ export default function Layout({ children }: LayoutProps) {
     { path: '/', label: 'Inicio' },
     { path: '/worlds', label: 'Mundos' },
     { path: '/simulations', label: 'Simulaciones' },
+    { path: '/stats', label: 'Estadísticas' },
   ]
 
   return (

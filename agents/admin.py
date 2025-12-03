@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Agent, Simulation, BlackboardTask, BlackboardEntry
+from .models import Agent, Simulation, BlackboardTask, BlackboardEntry, SimulationStats
 
 
 @admin.register(Agent)
@@ -35,3 +35,35 @@ class BlackboardEntryAdmin(admin.ModelAdmin):
     list_filter = ['entry_type', 'is_active', 'world', 'created_at']
     search_fields = ['id', 'agent_id', 'entry_type', 'world__name']
     readonly_fields = ['id', 'created_at']
+
+
+@admin.register(SimulationStats)
+class SimulationStatsAdmin(admin.ModelAdmin):
+    list_display = ['id', 'simulation', 'efficiency_score', 'success_rate', 
+                    'completion_percentage', 'infestation_reduction_percentage', 'created_at']
+    list_filter = ['created_at', 'simulation__world', 'simulation__status']
+    search_fields = ['id', 'simulation__id', 'simulation__world__name']
+    readonly_fields = ['id', 'created_at']
+    fieldsets = (
+        ('Información General', {
+            'fields': ('simulation', 'duration_seconds')
+        }),
+        ('Eficiencia', {
+            'fields': ('efficiency_score', 'tasks_per_step', 'success_rate', 'completion_percentage')
+        }),
+        ('Infestación', {
+            'fields': ('initial_infested_fields', 'final_infested_fields', 
+                      'infestation_reduction_percentage', 'average_initial_infestation', 
+                      'average_final_infestation')
+        }),
+        ('Estadísticas por Agente', {
+            'fields': ('avg_tasks_per_agent', 'avg_fields_per_agent', 
+                      'max_tasks_by_agent', 'min_tasks_by_agent')
+        }),
+        ('Tiempo', {
+            'fields': ('avg_time_per_task',)
+        }),
+        ('Metadatos', {
+            'fields': ('metadata', 'created_at')
+        }),
+    )

@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import StatsOverview from '../components/StatsOverview'
 import './Home.css'
 
 export default function Home() {
@@ -53,14 +54,23 @@ export default function Home() {
           transition={{ delay: 0.3 }}
           className="feature-card"
         >
-          <div className="feature-icon">🎬</div>
-          <h3>Animaciones</h3>
-          <p>Visualiza animaciones de pathfinding con múltiples tractores</p>
-          <Link to="/worlds" className="btn btn-primary">
-            Explorar
+          <div className="feature-icon">📊</div>
+          <h3>Estadísticas</h3>
+          <p>Visualiza estadísticas detalladas y métricas de rendimiento de las simulaciones</p>
+          <Link to="/stats" className="btn btn-primary">
+            Ver Estadísticas
           </Link>
         </motion.div>
       </div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4 }}
+        className="stats-section"
+      >
+        <StatsOverview />
+      </motion.div>
     </div>
   )
 }

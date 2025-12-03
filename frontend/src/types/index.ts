@@ -81,3 +81,25 @@ export interface WorldTemplate {
   max_attempts: number
 }
 
+export interface SimulationStats {
+  id: string
+  simulation: string
+  duration_seconds?: number
+  efficiency_score?: number
+  tasks_per_step?: number
+  success_rate?: number
+  completion_percentage?: number
+  initial_infested_fields: number
+  final_infested_fields: number
+  infestation_reduction_percentage?: number
+  average_initial_infestation?: number
+  average_final_infestation?: number
+  avg_tasks_per_agent?: number
+  avg_fields_per_agent?: number
+  max_tasks_by_agent: number
+  min_tasks_by_agent: number
+  avg_time_per_task?: number
+  created_at: string
+  metadata: Record<string, any>
+}
+

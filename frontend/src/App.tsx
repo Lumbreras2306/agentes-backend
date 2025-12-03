@@ -5,6 +5,7 @@ import Worlds from './pages/Worlds'
 import WorldDetail from './pages/WorldDetail'
 import Simulations from './pages/Simulations'
 import SimulationDetail from './pages/SimulationDetail'
+import Stats from './pages/Stats'
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
           <Route path="/worlds/:id" element={<WorldDetail />} />
           <Route path="/simulations" element={<Simulations />} />
           <Route path="/simulations/:id" element={<SimulationDetail />} />
+          <Route path="/stats" element={<Stats />} />
         </Routes>
       </Layout>
     </Router>

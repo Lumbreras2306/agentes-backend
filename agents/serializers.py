@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Agent, Simulation, AgentType
-from .models import BlackboardTask, BlackboardEntry
+from .models import BlackboardTask, BlackboardEntry, SimulationStats
 
 
 class AgentSerializer(serializers.ModelSerializer):
@@ -68,6 +68,23 @@ class BlackboardEntrySerializer(serializers.ModelSerializer):
         fields = [
             'id', 'world', 'entry_type', 'content', 'agent_id',
             'created_at', 'expires_at', 'is_active'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+class SimulationStatsSerializer(serializers.ModelSerializer):
+    """Serializer para estadísticas de simulación"""
+    
+    class Meta:
+        model = SimulationStats
+        fields = [
+            'id', 'simulation', 'duration_seconds', 'efficiency_score',
+            'tasks_per_step', 'success_rate', 'completion_percentage',
+            'initial_infested_fields', 'final_infested_fields',
+            'infestation_reduction_percentage', 'average_initial_infestation',
+            'average_final_infestation', 'avg_tasks_per_agent',
+            'avg_fields_per_agent', 'max_tasks_by_agent', 'min_tasks_by_agent',
+            'avg_time_per_task', 'created_at', 'metadata'
         ]
         read_only_fields = ['id', 'created_at']
 
