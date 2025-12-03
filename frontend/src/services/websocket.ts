@@ -86,7 +86,17 @@ export class SimulationWebSocket {
     
     // Determinar la URL del WebSocket según el entorno
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = import.meta.env.VITE_API_URL?.replace(/^https?:\/\//, '') || 'localhost:8000'
+    
+    // Si hay VITE_API_URL configurado, usarlo (quitando protocolo si existe)
+    // Si no, usar el host actual del navegador con puerto 8000
+    let host: string
+    if (import.meta.env.VITE_API_URL) {
+      host = import.meta.env.VITE_API_URL.replace(/^https?:\/\//, '').replace(/\/api$/, '')
+    } else {
+      // Usar el host actual del navegador con puerto 8000
+      host = `${window.location.hostname}:8000`
+    }
+    
     this.url = `${protocol}//${host}/ws/simulations/${simulationId}/`
   }
 
