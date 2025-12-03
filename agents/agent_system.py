@@ -228,7 +228,7 @@ class ScoutAgent(ap.Agent):
                     str(self.id),
                     command,
                     wait_for_confirmation=True,
-                    timeout=5.0
+                    timeout=15.0
                 )
                 
                 if confirmed:
@@ -567,7 +567,7 @@ class FumigatorAgent(ap.Agent):
                     str(self.id),
                     command,
                     wait_for_confirmation=True,
-                    timeout=5.0
+                    timeout=15.0
                 )
                 
                 if confirmed:
@@ -645,7 +645,7 @@ class FumigatorAgent(ap.Agent):
                     str(self.id),
                     command,
                     wait_for_confirmation=True,
-                    timeout=5.0
+                    timeout=15.0
                 )
                 
                 if confirmed:
@@ -769,7 +769,7 @@ class FumigatorAgent(ap.Agent):
                     str(self.id),
                     command,
                     wait_for_confirmation=wait_confirmation,
-                    timeout=5.0
+                    timeout=15.0
                 )
             
             self.status = 'refilling'
@@ -807,7 +807,7 @@ class FumigatorAgent(ap.Agent):
                 str(self.id),
                 command,
                 wait_for_confirmation=True,
-                timeout=5.0
+                timeout=15.0
             )
             
             if confirmed:
@@ -831,7 +831,7 @@ class FumigatorAgent(ap.Agent):
                     str(self.id),
                     command,
                     wait_for_confirmation=wait_confirmation,
-                    timeout=5.0
+                    timeout=15.0
                 )
             
             self.status = 'refilling'
@@ -1019,7 +1019,7 @@ def _send_simulation_update(simulation_id: str, data: Dict[str, Any]):
         print(f"Error enviando actualización WebSocket: {e}")
 
 
-def _send_agent_command(simulation_id: str, agent_id: str, command: Dict[str, Any], wait_for_confirmation: bool = True, timeout: float = 5.0) -> bool:
+def _send_agent_command(simulation_id: str, agent_id: str, command: Dict[str, Any], wait_for_confirmation: bool = True, timeout: float = 15.0) -> bool:
     """
     Envía un comando a un agente y espera confirmación del cliente.
     
