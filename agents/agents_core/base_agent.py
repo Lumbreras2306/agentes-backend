@@ -138,13 +138,21 @@ class BaseAgent(ap.Agent):
     # ========== BASIC ACTIONS ==========
 
     def _execute_move(self, command: Dict[str, Any]):
-        """Execute a move command"""
+        """Execute a move command with collision detection"""
         # Get path from command or agent state
         agent_state = self.blackboard.knowledge_base.get_agent(str(self.id))
 
         if agent_state and agent_state.path and len(agent_state.path) > agent_state.path_index:
             # Move along path
             next_pos = agent_state.path[agent_state.path_index]
+            
+            # Check for collision with other agents
+            if self._check_collision(next_pos):
+                # Collision detected - wait this step, don't move
+                self.status = 'waiting'
+                return
+            
+            # No collision, move
             self.position = next_pos
 
             # Update path index
@@ -163,8 +171,36 @@ class BaseAgent(ap.Agent):
             target = command.get('to_position') or command.get('target_position')
 
             if target:
-                self.position = tuple(target)
+                target_pos = tuple(target)
+                # Check for collision
+                if self._check_collision(target_pos):
+                    # Collision detected - wait this step
+                    self.status = 'waiting'
+                    return
+                
+                self.position = target_pos
                 self.status = 'moving'
+    
+    def _check_collision(self, target_position: Tuple[int, int]) -> bool:
+        """
+        Check if there's another agent at the target position.
+        
+        Returns:
+            True if there's a collision (another agent at target), False otherwise
+        """
+        # Get all agents from knowledge base
+        all_agents = self.blackboard.knowledge_base.get_all_agents()
+        
+        for agent_state in all_agents:
+            # Skip self
+            if agent_state.agent_id == str(self.id):
+                continue
+            
+            # Check if agent is at target position
+            if agent_state.position == target_position:
+                return True
+        
+        return False
 
     def _on_path_completed(self):
         """Called when agent completes its path"""

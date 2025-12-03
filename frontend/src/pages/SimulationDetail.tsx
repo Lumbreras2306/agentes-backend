@@ -145,12 +145,10 @@ export default function SimulationDetail() {
   }, [])
 
   const handleStepUpdate = useCallback((data: any) => {
-    console.log('handleStepUpdate called with:', data)
     setCurrentStep(data.step || 0)
 
     // Update agents
     if (data.agents && Array.isArray(data.agents)) {
-      console.log('Processing agents:', data.agents)
       setAgents(prevAgents => {
         const updatedAgents = data.agents
           .map((agentData: any) => {
@@ -234,7 +232,6 @@ export default function SimulationDetail() {
       })
       .filter((agent: Agent | null): agent is Agent => agent !== null)
       
-      console.log('Updated agents:', updatedAgents)
       return updatedAgents
       })
     }
@@ -256,10 +253,7 @@ export default function SimulationDetail() {
 
     // Update infestation grid
     if (data.infestation_grid) {
-      console.log('Updating infestation grid:', data.infestation_grid)
       setInfestationGrid(data.infestation_grid)
-    } else {
-      console.log('No infestation_grid in data')
     }
 
     // Fase siempre es fumigation desde el inicio (scouts eliminados)

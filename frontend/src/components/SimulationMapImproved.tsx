@@ -65,7 +65,14 @@ export default function SimulationMap({
 }: SimulationMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationFrameRef = useRef<number>()
+  const activeAnimationsRef = useRef<Map<string, ActiveAnimation>>(new Map())
   const [completedCells, setCompletedCells] = useState<Set<string>>(new Set())
+  
+  // Sincronizar activeAnimations con el ref para evitar re-renders infinitos
+  useEffect(() => {
+    activeAnimationsRef.current = activeAnimations
+  }, [activeAnimations])
+  
 
   // Actualizar celdas completadas cuando las tareas se completan
   useEffect(() => {
@@ -82,18 +89,10 @@ export default function SimulationMap({
     // Función de renderizado con animaciones
     const render = (currentTime: number) => {
       const canvas = canvasRef.current
-      if (!canvas || !world) {
-        console.log('Canvas or world not available', { canvas: !!canvas, world: !!world })
-        return
-      }
+      if (!canvas || !world) return
 
       const ctx = canvas.getContext('2d')
-      if (!ctx) {
-        console.log('Could not get canvas context')
-        return
-      }
-      
-      console.log('Rendering map:', { agentsCount: agents.length, tasksCount: tasks.length, hasInfestationGrid: !!infestationGrid })
+      if (!ctx) return
 
       const cellSize = Math.min(
         Math.floor(canvas.width / world.width),
@@ -146,25 +145,35 @@ export default function SimulationMap({
           }
           // Mostrar infestación (todas las celdas están reveladas desde el inicio)
           else if (showInfestation) {
-            const gridToUse = infestationGrid || world.infestation_grid
-            if (gridToUse && Array.isArray(gridToUse) && gridToUse[z] && Array.isArray(gridToUse[z]) && gridToUse[z][x] > 0) {
+            // Usar infestationGrid si tiene valores, sino usar el del mundo
+            let gridToUse = infestationGrid
+            if (!gridToUse || !gridToUse.some(row => row && row.some(val => val > 0))) {
+              gridToUse = world.infestation_grid
+            }
+            
+            if (gridToUse && Array.isArray(gridToUse) && gridToUse[z] && Array.isArray(gridToUse[z])) {
               const infestationLevel = gridToUse[z][x]
-              const intensity = infestationLevel / 100
+              // Verificar que el nivel de infestación sea un número válido y mayor que 0
+              if (typeof infestationLevel === 'number' && infestationLevel > 0) {
+                const intensity = Math.min(Math.max(infestationLevel / 100, 0), 1)
 
-              // Gradiente de amarillo a rojo
-              const r = 255
-              const g = Math.floor(255 * (1 - intensity))
-              const b = 0
+                // Gradiente de amarillo a rojo
+                const r = 255
+                const g = Math.floor(255 * (1 - intensity))
+                const b = 0
 
-              ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.7)`
-              ctx.fillRect(xPos, zPos, cellSize, cellSize)
+                ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.7)`
+                ctx.fillRect(xPos, zPos, cellSize, cellSize)
 
-              // Mostrar número de infestación
-              ctx.fillStyle = '#000'
-              ctx.font = `bold ${cellSize * 0.4}px Arial`
-              ctx.textAlign = 'center'
-              ctx.textBaseline = 'middle'
-              ctx.fillText(`${infestationLevel}`, xPos + cellSize / 2, zPos + cellSize / 2)
+                // Mostrar número de infestación solo si el cellSize es lo suficientemente grande
+                if (cellSize > 15) {
+                  ctx.fillStyle = '#000'
+                  ctx.font = `bold ${Math.max(8, cellSize * 0.3)}px Arial`
+                  ctx.textAlign = 'center'
+                  ctx.textBaseline = 'middle'
+                  ctx.fillText(`${Math.round(infestationLevel)}`, xPos + cellSize / 2, zPos + cellSize / 2)
+                }
+              }
             }
           }
 
@@ -200,7 +209,7 @@ export default function SimulationMap({
       })
 
       // Dibujar efectos de animación
-      activeAnimations.forEach((animation) => {
+      activeAnimationsRef.current.forEach((animation) => {
         const elapsed = currentTime - animation.startTime
         const progress = Math.min(elapsed / animation.duration, 1)
 
@@ -228,20 +237,19 @@ export default function SimulationMap({
       })
 
       // Dibujar agentes (encima de todo)
-      if (agents.length === 0) {
-        console.log('No agents to render')
-      }
       agents.forEach((agent, index) => {
-        let x = agent.position_x ?? 0
-        let z = agent.position_z ?? 0
+        // Obtener posición del agente
+        let x = agent.position_x
+        let z = agent.position_z
         
-        // Debug: verificar que el agente tenga posición válida
-        if (x === 0 && z === 0 && agent.position_x === undefined && agent.position_z === undefined) {
-          console.warn('Agent without position:', agent)
+        // Verificar que la posición sea válida
+        if (x === undefined || x === null || z === undefined || z === null) {
+          console.warn('Agent without valid position:', agent)
+          return
         }
 
         // Si hay animación de movimiento, interpolar posición
-        const moveAnimation = Array.from(activeAnimations.values()).find(
+        const moveAnimation = Array.from(activeAnimationsRef.current.values()).find(
           a => a.type === 'move' && (a.agentId === agent.id || a.agentId === agent.agent_id)
         )
 
@@ -307,7 +315,7 @@ export default function SimulationMap({
         cancelAnimationFrame(animationFrameRef.current)
       }
     }
-  }, [world, agents, tasks, activeAnimations, infestationGrid, revealedCells, completedCells, showInfestation])
+  }, [world, agents, tasks, infestationGrid, revealedCells, completedCells, showInfestation])
 
   return (
     <div className="simulation-map-container">
@@ -330,6 +338,10 @@ export default function SimulationMap({
         <div className="legend-item">
           <div className="legend-color infestation"></div>
           <span>🦠 Infestación (amarillo→rojo)</span>
+        </div>
+        <div className="legend-item">
+          <div className="legend-color" style={{ backgroundColor: 'transparent', border: '2px solid #888' }}></div>
+          <span>⚠️ Niveles de infestación &lt; 10 se ignoran</span>
         </div>
       </div>
     </div>

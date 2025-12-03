@@ -1098,12 +1098,22 @@ class DynamicPathfinder(Pathfinder):
     def _get_cost(self, x: int, z: int, prefer_roads: bool = True) -> float:
         """
         Calcula el costo de moverse a una celda, incluyendo pesos dinámicos.
+        
+        IMPORTANTE: 
+        - Los caminos (ROAD) siempre tienen costo bajo y NO se les aplica peso dinámico.
+        - Los campos (FIELD) tienen pesos dinámicos pero con límite máximo para evitar bloqueos.
+        - Si es necesario pasar por un campo con peso alto, se puede hacer (no es infinito).
         """
         base_cost = super()._get_cost(x, z, prefer_roads)
         
-        # Si es un campo, agregar peso dinámico
+        # Si es un campo, agregar peso dinámico (que aumenta cuando se pisa)
         if self.grid[z][x] == TileType.FIELD:
             dynamic_weight = self.field_weights.get((x, z), 0.0)
-            return base_cost + dynamic_weight
+            # El peso dinámico ya está limitado a 100.0 en _update_field_weight
+            # Pero aquí también aplicamos un límite de seguridad
+            effective_weight = min(dynamic_weight, 100.0)
+            return base_cost + effective_weight
         
+        # Para ROAD y BARN, retornar el costo base sin modificar
+        # Esto asegura que los caminos siempre tengan prioridad
         return base_cost

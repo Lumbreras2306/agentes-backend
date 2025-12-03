@@ -83,6 +83,8 @@ class TaskState:
     created_at: Optional[datetime] = None
     assigned_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    failure_count: int = 0  # Number of times this task has failed
+    last_failure_at: Optional[datetime] = None  # When this task last failed
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -177,10 +179,14 @@ class KnowledgeBase:
 
                 # Emit event if position changed
                 if 'position' in updates:
-                    self._emit_event(EventType.AGENT_MOVED, {
-                        'agent_id': agent_id,
-                        'position': updates['position']
-                    }, source=agent_id)
+                    old_position = agent.position
+                    new_position = updates['position']
+                    if old_position != new_position:
+                        # Agent actually moved - this will be handled by ConflictResolver
+                        self._emit_event(EventType.AGENT_MOVED, {
+                            'agent_id': agent_id,
+                            'position': new_position
+                        }, source=agent_id)
 
                 # Emit event if status changed to idle
                 if 'status' in updates and updates['status'] == 'idle':
@@ -276,6 +282,14 @@ class KnowledgeBase:
         """Get all tasks"""
         with self._lock:
             return list(self._tasks.values())
+    
+    def get_task_by_position(self, x: int, z: int) -> Optional[TaskState]:
+        """Get task at a specific position"""
+        with self._lock:
+            for task in self._tasks.values():
+                if task.position == (x, z):
+                    return task
+            return None
 
     # ========== WORLD STATE MANAGEMENT ==========
 

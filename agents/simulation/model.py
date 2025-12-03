@@ -132,7 +132,8 @@ class FumigationModel(ap.Model):
         from ..blackboard.knowledge_base import TaskState
         import uuid
         
-        min_infestation = 1  # Mínimo nivel de infestación para crear tarea
+        # Usar min_infestation del parámetro si está disponible, sino usar 10 como valor razonable
+        min_infestation = self.p.get('min_infestation', 10)  # Mínimo nivel de infestación para crear tarea
         infestation_grid = self.world_instance.infestation_grid
         grid = self.world_instance.grid
         

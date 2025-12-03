@@ -47,7 +47,8 @@ class PathPlannerKS(KnowledgeSource):
         return False
 
     def execute(self):
-        """Calculate paths for newly assigned tasks"""
+        """Calculate paths for newly assigned tasks and refill commands"""
+        # Handle task assignments
         recent_assignments = self.kb.get_recent_events(EventType.TASK_ASSIGNED, limit=20)
 
         for event in recent_assignments:
@@ -68,28 +69,89 @@ class PathPlannerKS(KnowledgeSource):
             # Calculate path using pathfinding
             path = self._calculate_path(agent.position, task.position, agent.agent_type)
 
-            if path:
-                # Update agent with path
+            # Validate path before assigning
+            if path and len(path) > 0:
+                # Check if path is valid (destination is reachable)
+                if path[-1] == tuple(task.position):
+                    # Valid path - update agent
+                    self.kb.update_agent(
+                        agent_id,
+                        path=path,
+                        path_index=0,
+                    )
+
+                    # Update command with path
+                    command = self.kb.get_shared(f'command_{agent_id}')
+                    if command:
+                        command['path'] = path
+                        self.kb.set_shared(f'command_{agent_id}', command)
+
+                    # Emit event
+                    self.kb.emit_event(EventType.PATH_CALCULATED, {
+                        'agent_id': agent_id,
+                        'task_id': task_id,
+                        'path_length': len(path),
+                    })
+                else:
+                    # Path doesn't reach destination - mark task as failed
+                    print(f"PathPlanner: Invalid path for task {task_id} - destination unreachable")
+                    self.kb.update_task(
+                        task_id,
+                        status='failed',
+                        assigned_agent_id=None,
+                    )
+                    # Reset agent
+                    self.kb.update_agent(
+                        agent_id,
+                        status='idle',
+                        current_task_id=None,
+                        path=[],
+                        path_index=0,
+                    )
+                    self.kb.delete_shared(f'command_{agent_id}')
+            else:
+                # No path found - mark task as failed
+                print(f"PathPlanner: No path found for task {task_id}")
+                self.kb.update_task(
+                    task_id,
+                    status='failed',
+                    assigned_agent_id=None,
+                )
+                # Reset agent
                 self.kb.update_agent(
                     agent_id,
-                    path=path,
+                    status='idle',
+                    current_task_id=None,
+                    path=[],
                     path_index=0,
                 )
-
-                # Update command with path
-                command = self.kb.get_shared(f'command_{agent_id}')
-                if command:
-                    command['path'] = path
-                    self.kb.set_shared(f'command_{agent_id}', command)
-
-                # Emit event
-                self.kb.emit_event(EventType.PATH_CALCULATED, {
-                    'agent_id': agent_id,
-                    'task_id': task_id,
-                    'path_length': len(path),
-                })
+                self.kb.delete_shared(f'command_{agent_id}')
 
             self.processed_assignments.add(key)
+        
+        # Handle refill commands (returning to barn)
+        # Check for agents with refill commands that don't have paths yet
+        fumigators = self.kb.get_agents_by_type('fumigator')
+        for fumigator in fumigators:
+            command = self.kb.get_shared(f'command_{fumigator.agent_id}')
+            if command and command.get('action') == 'refill_pesticide':
+                # Check if agent already has a path
+                if not fumigator.path or len(fumigator.path) == 0:
+                    barn_position = command.get('barn_position')
+                    if barn_position:
+                        # Calculate path to barn
+                        path = self._calculate_path(fumigator.position, barn_position, fumigator.agent_type)
+                        if path:
+                            # Update agent with path
+                            self.kb.update_agent(
+                                fumigator.agent_id,
+                                path=path,
+                                path_index=0,
+                            )
+                            
+                            # Update command with path
+                            command['path'] = path
+                            self.kb.set_shared(f'command_{fumigator.agent_id}', command)
 
     def _calculate_path(
         self,

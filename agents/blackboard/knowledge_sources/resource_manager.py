@@ -7,7 +7,7 @@ refill operations when agents are running low.
 
 from .base import KnowledgeSource
 from ..knowledge_base import EventType, AgentState
-from typing import List
+from typing import List, Tuple
 
 
 class ResourceManagerKS(KnowledgeSource):
@@ -61,12 +61,44 @@ class ResourceManagerKS(KnowledgeSource):
                 if fumigator.status in ['idle', 'completed']:
                     self._trigger_refill(fumigator, urgent=False)
 
-            # Also check if agent has a task but not enough pesticide
+            # Also check if agent has a task but not enough pesticide for the FULL path
             if fumigator.current_task_id:
                 task = self.kb.get_task(fumigator.current_task_id)
-                if task and fumigator.pesticide_level < task.infestation_level:
-                    # Cancel task and send to refill
-                    self._cancel_task_and_refill(fumigator, task)
+                if task:
+                    # Estimate pesticide needed for the full path
+                    pesticide_needed = self._estimate_pesticide_for_path(
+                        fumigator.position,
+                        task.position,
+                        task.infestation_level
+                    )
+                    
+                    if fumigator.pesticide_level < pesticide_needed:
+                        # Cancel task and send to refill
+                        self._cancel_task_and_refill(fumigator, task)
+    
+    def _estimate_pesticide_for_path(
+        self,
+        start: Tuple[int, int],
+        end: Tuple[int, int],
+        destination_infestation: int
+    ) -> int:
+        """
+        Estimate pesticide needed for the full path including destination.
+        This is a simplified version - the full calculation is in TaskAllocator.
+        """
+        from world.world_generator import TileType
+        
+        total_pesticide = destination_infestation
+        
+        # Simple estimation: assume some infestation along the path
+        # This is a conservative estimate
+        manhattan_dist = abs(start[0] - end[0]) + abs(start[1] - end[1])
+        # Estimate that 30% of path cells are fields with infestation
+        estimated_field_cells = int(manhattan_dist * 0.3)
+        # Assume average infestation of 30 per field cell
+        estimated_path_pesticide = estimated_field_cells * 30
+        
+        return total_pesticide + estimated_path_pesticide
 
     def _trigger_refill(self, fumigator: AgentState, urgent: bool = False):
         """

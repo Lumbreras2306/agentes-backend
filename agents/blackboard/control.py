@@ -47,6 +47,7 @@ class ControlComponent:
             ResourceManagerKS,
             PathPlannerKS,
             ConflictResolverKS,
+            SimulationControllerKS,
         )
 
         # Initialize Knowledge Sources (ScoutCoordinatorKS eliminado)
@@ -56,6 +57,7 @@ class ControlComponent:
             ResourceManagerKS(self.kb),
             PathPlannerKS(self.kb),
             ConflictResolverKS(self.kb),
+            SimulationControllerKS(self.kb),
         ]
 
         # Build trigger map

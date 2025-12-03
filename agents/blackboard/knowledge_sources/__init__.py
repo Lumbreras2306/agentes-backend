@@ -12,6 +12,7 @@ from .resource_manager import ResourceManagerKS
 from .conflict_resolver import ConflictResolverKS
 from .path_planner import PathPlannerKS
 from .scout_coordinator import ScoutCoordinatorKS
+from .simulation_controller import SimulationControllerKS
 
 __all__ = [
     'KnowledgeSource',
@@ -21,4 +22,5 @@ __all__ = [
     'ConflictResolverKS',
     'PathPlannerKS',
     'ScoutCoordinatorKS',
+    'SimulationControllerKS',
 ]
